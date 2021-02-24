@@ -56,26 +56,4 @@ if [ ${BITS} -eq 64 ]; then
         -DMNN_USE_THREAD_POOL=ON 
 fi
 
-# cmake ../../../ \
-# -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
-# -DCMAKE_BUILD_TYPE=Release \
-# -DANDROID_ABI=$ABI \
-# -DANDROID_STL=c++_static \
-# -DCMAKE_BUILD_TYPE=Release \
-# -DANDROID_NATIVE_API_LEVEL=android-29  \
-# -DANDROID_TOOLCHAIN=clang \
-# -DMNN_USE_SYSTEM_LIB=ON \
-# -DMNN_BUILD_FOR_ANDROID_COMMAND=ON \
-# -DMNN_GPU_TRACE=ON \
-# -DMNN_OPENCL=ON \
-# -DMNN_USE_OPENCV=OFF \
-# -DMNN_BUILD_TRAIN=ON \
-# -DMNN_BUILD_TRAIN_MINI=OFF \
-# -DMNN_OPENMP=OFF \
-# -DMNN_USE_THREAD_POOL=ON \
-# -DNATIVE_LIBRARY_OUTPUT=. \
-# -DNATIVE_INCLUDE_OUTPUT=. $1 $2 $3
-
-# make -j4
-
 cd ../../../

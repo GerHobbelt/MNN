@@ -398,6 +398,8 @@ if (NOT APPLE)
               PROPERTY INTERFACE_LINK_LIBRARIES ${OpenMP_CXX_FLAGS} Threads::Threads)
       endif()
       # TODO: Don't pollute global CFLAGS
+      set(OpenMP_C_FLAGS "${OpenMP_C_FLAGS} -static-openmp")
+      set(OpenMP_CXX_FLAGS "${OpenMP_CXX_FLAGS} -static-openmp")
       set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
       set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
       set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OpenMP_SHARED_LINKER_FLAGS}")

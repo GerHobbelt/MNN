@@ -123,9 +123,37 @@ public:
     std::shared_ptr<Module> dropout;
 };
 
-static void train(std::shared_ptr<Module> model, std::string root) {
-    MnistUtils::train(model, root);
+static void train(std::shared_ptr<Module> model, std::string root, MNNForwardType forward = MNN_FORWARD_CPU) {
+    MnistUtils::train(model, root, forward);
 }
+
+static inline MNNForwardType forwardType(std::string type) {
+    if (type.compare("CPU") == 0) return MNN_FORWARD_CPU;
+    else if (type.compare("Vulkan") == 0) return MNN_FORWARD_VULKAN;
+    else if (type.compare("OpenCL") == 0) return MNN_FORWARD_OPENCL;
+    else if (type.compare("Metal") == 0) return MNN_FORWARD_METAL;
+    else return MNN_FORWARD_CPU;
+}
+
+class MnistTrainCustom : public DemoUnit {
+public:
+    virtual int run(int argc, const char* argv[]) override {
+        if (argc < 2) {
+            std::cout << "usage: ./runTrainDemo.out MnistTrainCustom /path/to/unzipped/mnist/data/ [MNNForwardType]" << std::endl;
+            return 0;
+        }
+        // global random number generator, should invoke before construct the model and dataset
+        RandomGenerator::generator(17);
+
+        std::string root = argv[1];
+
+        MNNForwardType forward = forwardType(argv[2]);
+
+        std::shared_ptr<Module> model(new Lenet);
+        train(model, root, forward);
+        return 0;
+    }
+};
 
 class MnistInt8Train : public DemoUnit {
 public:
@@ -174,6 +202,7 @@ public:
     }
 };
 
+
 class MnistTrainSnapshot : public DemoUnit {
 public:
     virtual int run(int argc, const char* argv[]) override {
@@ -195,6 +224,7 @@ public:
         return 0;
     }
 };
+DemoUnitSetRegister(MnistTrainCustom, "MnistTrainCustom");
 DemoUnitSetRegister(MnistTrain, "MnistTrain");
 DemoUnitSetRegister(MnistTrainSnapshot, "MnistTrainSnapshot");
 DemoUnitSetRegister(MnistInt8Train, "MnistInt8Train");

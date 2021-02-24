@@ -9,8 +9,9 @@
 #ifndef MnistUtils_hpp
 #define MnistUtils_hpp
 #include <MNN/expr/Module.hpp>
+#include <MNN/MNNForwardType.h>
 class MnistUtils {
 public:
-    static void train(std::shared_ptr<MNN::Express::Module> model, std::string root);
+    static void train(std::shared_ptr<MNN::Express::Module> model, std::string root, MNNForwardType forward);
 };
 #endif
