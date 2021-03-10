@@ -160,6 +160,7 @@ endif()
 option(MNN_BUILD_BENCHMARK "Build benchmark or not" OFF)
 option(MNN_BUILD_TEST "Build tests or not" OFF)
 option(MNN_BUILD_FOR_ANDROID_COMMAND "Build from command" OFF)
+option(MNN_BUILD_JNI "Build Java Native Interface" OFF)
 option(MNN_USE_LOGCAT "Use Logcat intead of print for info" ON)
 set (MNN_HIDDEN FALSE)
 IF(CMAKE_BUILD_TYPE MATCHES Debug)
@@ -544,6 +545,19 @@ IF(MNN_BUILD_TRAIN)
     list(APPEND MNN_OBJECTS_TO_LINK $<TARGET_OBJECTS:MNNTrain>)
   ENDIF()
 ENDIF()
+
+# JNI
+IF(CMAKE_SYSTEM_NAME MATCHES "^Android" AND MNN_BUILD_JNI)
+  add_subdirectory(project/androidv2/app/src/main/cpp)
+  IF(MNN_SEP_BUILD)
+    list(APPEND MNN_DEPS MNNJni)
+  ELSE()
+    list(APPEND MNN_TARGETS MNNJni)
+    list(APPEND MNN_OBJECTS_TO_LINK $<TARGET_OBJECTS:MNNJni>)
+  ENDIF()
+ENDIF()
+
+
 
 #CodeGen
 IF(MNN_BUILD_CODEGEN)
