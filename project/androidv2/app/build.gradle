@@ -28,12 +28,13 @@ android {
                         "-DMNN_GPU_TRACE=ON",
                         "-DMNN_OPENMP=ON",
                         "-DMNN_USE_THREAD_POOL=OFF",
-                        "-DMNN_BUILD_BENCHMARK=OFF",
+                        "-DMNN_BUILD_BENCHMARK=ON",
+                        "-DANDROID_STL=c++_shared",
 //                        "-DMNN_BUILD_SHARED_LIBS=ON",
 //                        "-DMNN_SEP_BUILD=ON", // Only valid if MNN_BUILD_SHARED_LIBS=ON
                         "-DMNN_BUILD_JNI=ON",
-                        "-DNATIVE_LIBRARY_OUTPUT=.",
-                        "-DNATIVE_INCLUDE_OUTPUT=."
+                        "-DNATIVE_LIBRARY_OUTPUT=$buildDir/native-packed/native/libs",
+                        "-DNATIVE_INCLUDE_OUTPUT=$buildDir/native-packed/native/includes"
                 abiFilters 'armeabi-v7a', 'arm64-v8a'
             }
         }

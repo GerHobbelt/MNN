@@ -20,11 +20,16 @@ public class MainActivity extends AppCompatActivity {
         // Example of a call to a native method
         TextView tv = findViewById(R.id.sample_text);
         tv.setText(stringFromJNI());
+
+        runMnistDemo();
     }
 
     /**
-     * A native method that is implemented by the 'native-lib' native library,
+     * A native method that is implemented by the 'MNNJni' native library,
      * which is packaged with this application.
      */
     public native String stringFromJNI();
+
+    public native int runMnistDemo();
+
 }
