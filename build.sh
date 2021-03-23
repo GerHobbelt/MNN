@@ -102,9 +102,9 @@ adb shell "echo Build Flags: ABI=$ABI  OpenMP=$OPENMP Vulkan=$VULKAN OpenCL=$OPE
 # adb shell "gunzip $ANDROID_DIR/mnist/*"
 
 # CPU
-adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist CPU >> $ANDROID_DIR/train_benchmark.txt"
+# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist CPU >> $ANDROID_DIR/train_benchmark.txt"
 # Vulkan
-adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist Vulkan >> $ANDROID_DIR/train_benchmark.txt"
+# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist Vulkan >> $ANDROID_DIR/train_benchmark.txt"
 # OpenCL
 adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist OpenCL >> $ANDROID_DIR/train_benchmark.txt"
 
