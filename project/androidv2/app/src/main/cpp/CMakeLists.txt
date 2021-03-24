@@ -18,7 +18,7 @@ set(MNN_JNI_SRCS MNNJni.cpp ${GRAD} ${OPT} ${TRANS} ${DATA} ${MODELS} ${DATASET}
 
 IF(MNN_SEP_BUILD)
     add_library(MNNJni SHARED ${MNN_JNI_SRCS})
-    target_link_libraries(MNNJni MNNTrain MNN MNN_Express)
+    target_link_libraries(MNNJni ${MNN_DEPS})
 ELSE()
     add_library(MNNJni OBJECT ${MNN_JNI_SRCS})
 ENDIF()

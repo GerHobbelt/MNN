@@ -111,6 +111,13 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                 float rate   = LrScheduler::inv(0.01, epoch * iterations + i, 0.0001, 0.75);
                 sgd->setLearningRate(rate);
                 if (moveBatchSize % (10 * batchSize) == 0 || i == iterations - 1) {
+#ifdef MNN_USE_LOGCAT
+                    MNN_PRINT("epoch: %i %i/%i\tloss: %f\tlr: %f\ttime: %f ms / %i iter",
+                        epoch, moveBatchSize, dataLoader->size(), loss->readMap<float>()[0], rate, (float)_100Time.durationInUs() / 1000.0f,
+                              (i - lastIndex));
+                    _100Time.reset();
+                    lastIndex = i;
+#else
                     std::cout << "epoch: " << (epoch);
                     std::cout << "  " << moveBatchSize << " / " << dataLoader->size();
                     std::cout << " loss: " << loss->readMap<float>()[0];
@@ -119,6 +126,7 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                     std::cout.flush();
                     _100Time.reset();
                     lastIndex = i;
+#endif
                 }
                 sgd->step(loss);
             }
