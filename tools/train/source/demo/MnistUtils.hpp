@@ -12,6 +12,6 @@
 #include <MNN/MNNForwardType.h>
 class MnistUtils {
 public:
-    static void train(std::shared_ptr<MNN::Express::Module> model, std::string root, MNNForwardType forward);
+    static void train(std::shared_ptr<MNN::Express::Module> model, std::string root, MNNForwardType forward = MNN_FORWARD_CUDA, uint epochs = 50);
 };
 #endif
