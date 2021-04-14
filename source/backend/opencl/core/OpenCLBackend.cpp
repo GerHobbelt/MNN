@@ -337,6 +337,8 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
     if (NULL == exe) {
         if (nullptr != op->name()) {
             MNN_PRINT("The Creator Don't support type %s, memObject:%d, %s\n", MNN::EnumNameOpType(op->type()), mOpenCLRuntime->getGpuMemType(), op->name()->c_str());
+        } else if (op->type() == OpType_BinaryOp){
+            MNN_PRINT("The Creator Don't support type: %s_%s, memObject:%d,\n", EnumNameOpType(op->type()), EnumNameBinaryOpOperation((BinaryOpOperation)(op->main_as_BinaryOp()->opType())), mOpenCLRuntime->getGpuMemType());
         } else {
             MNN_PRINT("The Creator Don't support type %s, memObject:%d,\n", EnumNameOpType(op->type()), mOpenCLRuntime->getGpuMemType());
         }
