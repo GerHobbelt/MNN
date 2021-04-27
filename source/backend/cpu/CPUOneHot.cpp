@@ -51,6 +51,16 @@ ErrorCode CPUOneHot::onExecute(const std::vector<Tensor*>& inputs, const std::ve
     const int innerSize   = indices->elementSize() / outerSize;
     const auto indicesPtr = indices->host<int>();
 
+    MNN_PRINT("mAxis: %i", mAxis);
+    MNN_PRINT("axis: %i", axis);
+
+    MNN_PRINT("Depth: %i", depth);
+    MNN_PRINT("outerSize: %i", outerSize);
+    MNN_PRINT("innerSize: %i", innerSize);
+    for (int i = 0; i < axis; ++i) {
+        MNN_PRINT("indices->length(%i): %i", i, indices->length(i));
+    }
+
     auto dataType    = onValueTensor->getType();
     MNN_ASSERT(offValueTensor->getType() == dataType);
 

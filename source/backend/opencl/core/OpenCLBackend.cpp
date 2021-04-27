@@ -250,6 +250,10 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
             int imageHeight = tensorShape[0] * tensorShape[1];
             int imageWidth  = tensorShape[2] * UP_DIV(tensorShape[3], 4);
             if (imageHeight > maxImageSize.at(0) || imageWidth > maxImageSize.at(1)) {
+
+                auto tensorShape = OpenCL::tensorShapeFormat(t);
+                MNN_PRINT("INVALID TRIGGER: input n:%d, h:%d, w:%d, c:%d is larger than max image size h:%d, w: %d\n", tensorShape[0], tensorShape[1], tensorShape[2], tensorShape[3], maxImageSize.at(0), maxImageSize.at(1));
+
                 valid = false;
                 break;
             }
@@ -273,6 +277,11 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
             int imageHeight = tensorShape[0] * tensorShape[1];
             int imageWidth  = tensorShape[2] * UP_DIV(tensorShape[3], 4);
             if (imageHeight > maxImageSize.at(0) || imageWidth > maxImageSize.at(1)) {
+
+                auto tensorShape = OpenCL::tensorShapeFormat(t);
+                MNN_PRINT("INVALID TRIGGER: output n:%d, h:%d, w:%d, c:%d is larger than max image size h:%d, w:%d with h:%d, w:%d\n",
+                        tensorShape[0], tensorShape[1], tensorShape[2], tensorShape[3], maxImageSize.at(0), maxImageSize.at(1), imageHeight, imageWidth);
+
                 valid = false;
                 break;
             }
@@ -299,6 +308,8 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
         #if 0//close log
         if (nullptr != op->name()) {
             MNN_PRINT("The Creator Don't support type %s, memObject:%d, %s\n", MNN::EnumNameOpType(op->type()), mOpenCLRuntime->getGpuMemType(), op->name()->c_str());
+        } else if (op->type() == OpType_BinaryOp){
+            MNN_PRINT("The Creator Don't support type: %s_%s, memObject:%d,\n", EnumNameOpType(op->type()), EnumNameBinaryOpOperation((BinaryOpOperation)(op->main_as_BinaryOp()->opType())), mOpenCLRuntime->getGpuMemType());
         } else {
             MNN_PRINT("The Creator Don't support type %s, memObject:%d,\n", EnumNameOpType(op->type()), mOpenCLRuntime->getGpuMemType());
         }

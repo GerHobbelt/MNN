@@ -28,6 +28,6 @@ Java_com_nkastanos_mnn_MainActivity_runMnistDemo(JNIEnv *env, jobject thiz) {
 
     std::shared_ptr<Module> model(new Lenet);
 //    std::shared_ptr<Module> model(new MnistV2); // Does not work for some reason. "Error for binary op: input0's type != input1's type" after at the end of epoch
-    MnistUtils::train(model, root, forward);
+    MnistUtils::train(model, root, forward, 1);
     return 0;
 }

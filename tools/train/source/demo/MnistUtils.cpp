@@ -28,7 +28,7 @@ using namespace MNN;
 using namespace MNN::Express;
 using namespace MNN::Train;
 
-void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwardType forward = MNN_FORWARD_CUDA) {
+void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwardType forward, uint epochs) {
     {
         // Load snapshot
         auto para = Variable::load("mnist.snapshot.mnn");
@@ -44,7 +44,7 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
 
     auto dataset = MnistDataset::create(root, MnistDataset::Mode::TRAIN);
     // the stack transform, stack [1, 28, 28] to [n, 1, 28, 28]
-    const size_t batchSize  = 64;
+    const size_t batchSize  = 16;
     const size_t numWorkers = 0;
     bool shuffle            = true;
 
@@ -61,7 +61,8 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
 
     size_t testIterations = testDataLoader->iterNumber();
 
-    for (int epoch = 0; epoch < 50; ++epoch) {
+    for (uint epoch = 0; epoch < epochs; ++epoch) {
+        MNN_PRINT("New Epoch: %i\n", epoch);
         model->clearCache();
         exe->gc(Executor::FULL);
         exe->resetProfile();
@@ -73,6 +74,7 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
             int lastIndex = 0;
             int moveBatchSize = 0;
             for (int i = 0; i < iterations; i++) {
+                MNN_PRINT("New Iteration %i\n", i);
                 // AUTOTIME;
                 auto trainData  = dataLoader->next();
                 auto example    = trainData[0];
@@ -83,9 +85,12 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                 // Compute One-Hot
                 auto newTarget = _OneHot(_Cast<int32_t>(example.second[0]), _Scalar<int>(10), _Scalar<float>(1.0f),
                                          _Scalar<float>(0.0f));
-
+                MNN_PRINT("Start Forward\n");
                 auto predict = model->forward(example.first[0]);
+                MNN_PRINT("End Forward. Starting loss calc\n");
                 auto loss    = _CrossEntropy(predict, newTarget);
+                MNN_PRINT("End Loss: \n");
+                MNN_PRINT("LOSS = %f", loss->readMap<float>()[0]);
 //#define DEBUG_GRAD
 #ifdef DEBUG_GRAD
                 {
@@ -108,8 +113,15 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                     }
                 }
 #endif
+                MNN_PRINT("Setting LR");
                 float rate   = LrScheduler::inv(0.01, epoch * iterations + i, 0.0001, 0.75);
                 sgd->setLearningRate(rate);
+                MNN_PRINT("FIN LR");
+
+                MNN_PRINT("Start SGD Step");
+                sgd->step(loss);
+                MNN_PRINT("FIN SGD Step");
+
                 if (moveBatchSize % (10 * batchSize) == 0 || i == iterations - 1) {
 #ifdef MNN_USE_LOGCAT
                     MNN_PRINT("epoch: %i %i/%i\tloss: %f\tlr: %f\ttime: %f ms / %i iter",
@@ -128,7 +140,6 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                     lastIndex = i;
 #endif
                 }
-                sgd->step(loss);
             }
         }
         Variable::save(model->parameters(), "mnist.snapshot.mnn");
