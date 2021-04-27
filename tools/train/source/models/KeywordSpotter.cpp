@@ -2,7 +2,7 @@
 #define KEYWORD_SPOT_CPP
 
 #include "KeywordSpotter.hpp"
-#include <MNN/expr/NN.hpp>
+#include "NN.hpp"
 
 using namespace MNN::Express;
 

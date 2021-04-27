@@ -26,6 +26,8 @@ android {
                         "-DMNN_BUILD_TRAIN=ON",
                         "-DMNN_BUILD_TRAIN_MINI=OFF",
                         "-DMNN_GPU_TRACE=ON",
+                        "-DMNN_USE_SSE=OFF",
+                        "-DMNN_SUPPORT_BF16=OFF",
                         "-DMNN_OPENMP=ON",
                         "-DMNN_USE_THREAD_POOL=OFF",
                         "-DMNN_BUILD_BENCHMARK=ON",
