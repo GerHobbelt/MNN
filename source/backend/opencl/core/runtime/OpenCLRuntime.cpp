@@ -307,17 +307,23 @@ uint64_t OpenCLRuntime::maxAllocSize() const {
 }
 
 bool OpenCLRuntime::loadProgram(const std::string &programName, cl::Program *program) {
-    auto it_source = OpenCLProgramMap.find(programName);
-    if (it_source != OpenCLProgramMap.end()) {
-        cl::Program::Sources sources;
-        std::string source(it_source->second.begin(), it_source->second.end());
-        sources.push_back(source);
-        *program = cl::Program(context(), sources);
-        return true;
-    } else {
-        MNN_PRINT("Can't find kernel source !\n");
-        return false;
+    return OpenCLRuntime::loadPrograms(std::vector<std::string>{programName}, program);
+}
+
+bool OpenCLRuntime::loadPrograms(const std::vector<std::string> &programNames, cl::Program *program) {
+    cl::Program::Sources sources;
+    for (auto programName : programNames) {
+        auto it_source = OpenCLProgramMap.find(programName);
+        if (it_source != OpenCLProgramMap.end()) {
+            std::string source(it_source->second.begin(), it_source->second.end());
+            sources.push_back(source);
+        } else {
+            MNN_PRINT("Can't find kernel source '%s' !\n", programName.c_str());
+            return false;
+        }
     }
+    *program = cl::Program(context(), sources);
+    return true;
 }
 
 bool OpenCLRuntime::buildProgram(const std::string &buildOptionsStr, cl::Program *program) {
@@ -336,6 +342,7 @@ bool OpenCLRuntime::buildProgram(const std::string &buildOptionsStr, cl::Program
 
 cl::Kernel OpenCLRuntime::buildKernel(const std::string &programName, const std::string &kernelName,
                                       const std::set<std::string> &buildOptions) {
+//    MNN_PRINT("Building Kernel %s", programName.c_str());
     std::string buildOptionsStr;
     if (mIsSupportedFP16) {
         buildOptionsStr = "-DFLOAT=half -DFLOAT4=half4 -DFLOAT8=half8 -DFLOAT16=half16 -DRI_F=read_imageh -DWI_F=write_imageh -DCONVERT_FLOAT4=convert_half4 -DMNN_SUPPORT_FP16";
