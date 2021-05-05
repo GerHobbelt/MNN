@@ -342,7 +342,6 @@ bool OpenCLRuntime::buildProgram(const std::string &buildOptionsStr, cl::Program
 
 cl::Kernel OpenCLRuntime::buildKernel(const std::string &programName, const std::string &kernelName,
                                       const std::set<std::string> &buildOptions) {
-//    MNN_PRINT("Building Kernel %s", programName.c_str());
     std::string buildOptionsStr;
     if (mIsSupportedFP16) {
         buildOptionsStr = "-DFLOAT=half -DFLOAT4=half4 -DFLOAT8=half8 -DFLOAT16=half16 -DRI_F=read_imageh -DWI_F=write_imageh -DCONVERT_FLOAT4=convert_half4 -DMNN_SUPPORT_FP16";
@@ -364,8 +363,10 @@ cl::Kernel OpenCLRuntime::buildKernel(const std::string &programName, const std:
     auto buildProgramInter = mBuildProgramMap.find(key);
     cl::Program program;
     if (buildProgramInter != mBuildProgramMap.end()) {
+//        MNN_PRINT("Found existing Kernel %s", programName.c_str());
         program = buildProgramInter->second;
     } else {
+//        MNN_PRINT("Building Kernel %s", programName.c_str());
         this->loadProgram(programName, &program);
         auto status = this->buildProgram(buildOptionsStr, &program);
         if (!status) {

@@ -85,12 +85,8 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                 // Compute One-Hot
                 auto newTarget = _OneHot(_Cast<int32_t>(example.second[0]), _Scalar<int>(10), _Scalar<float>(1.0f),
                                          _Scalar<float>(0.0f));
-                MNN_PRINT("Start Forward\n");
                 auto predict = model->forward(example.first[0]);
-                MNN_PRINT("End Forward. Starting loss calc\n");
                 auto loss    = _CrossEntropy(predict, newTarget);
-                MNN_PRINT("End Loss: \n");
-                MNN_PRINT("LOSS = %f", loss->readMap<float>()[0]);
 //#define DEBUG_GRAD
 #ifdef DEBUG_GRAD
                 {
@@ -113,10 +109,8 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                     }
                 }
 #endif
-                MNN_PRINT("Setting LR");
                 float rate   = LrScheduler::inv(0.01, epoch * iterations + i, 0.0001, 0.75);
                 sgd->setLearningRate(rate);
-                MNN_PRINT("FIN LR");
 
                 MNN_PRINT("Start SGD Step");
                 sgd->step(loss);
