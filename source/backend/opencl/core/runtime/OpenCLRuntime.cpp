@@ -315,7 +315,7 @@ bool OpenCLRuntime::loadProgram(const std::string &programName, cl::Program *pro
         *program = cl::Program(context(), sources);
         return true;
     } else {
-        MNN_PRINT("Can't find kernel source !\n");
+        MNN_PRINT("Can't find kernel source '%s' !\n", programName.c_str());
         return false;
     }
 }
@@ -357,8 +357,10 @@ cl::Kernel OpenCLRuntime::buildKernel(const std::string &programName, const std:
     auto buildProgramInter = mBuildProgramMap.find(key);
     cl::Program program;
     if (buildProgramInter != mBuildProgramMap.end()) {
+//        MNN_PRINT("Found existing Kernel %s", programName.c_str());
         program = buildProgramInter->second;
     } else {
+//        MNN_PRINT("Building Kernel %s", programName.c_str());
         this->loadProgram(programName, &program);
         auto status = this->buildProgram(buildOptionsStr, &program);
         if (!status) {

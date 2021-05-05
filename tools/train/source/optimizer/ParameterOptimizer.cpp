@@ -53,16 +53,16 @@ bool ParameterOptimizer::step(Express::VARP loss) {
     MNN_PRINT("Start onGetNextParameter\n");
     auto res = this->onGetNextParameter(loss);
     MNN_PRINT("End onGetNextParameter\n");
-    MNN_PRINT("Start iterating result second\n");
+//    MNN_PRINT("Start iterating result second\n");
     for (auto iter : res) {
         iter.second.fix(Express::VARP::TRAINABLE);
     }
-    MNN_PRINT("Finish iterating result second\n");
-    MNN_PRINT("Start onGetNextParameter first\n");
+//    MNN_PRINT("Finish iterating result second\n");
+//    MNN_PRINT("Start onGetNextParameter first\n");
     for (auto iter : res) {
         iter.first->input(iter.second);
     }
-    MNN_PRINT("Finish iterating result first\n");
+//    MNN_PRINT("Finish iterating result first\n");
     return !res.empty();
 }
 

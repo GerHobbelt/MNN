@@ -19,7 +19,7 @@ android {
                 cppFlags ""
                 arguments "-DMNN_USE_LOGCAT=ON",
                         "-DMNN_USE_SYSTEM_LIB=OFF",
-                        "-DMNN_VULKAN=ON",
+                        "-DMNN_VULKAN=OFF",
                         "-DMNN_OPENCL=ON",
                         "-DMNN_USE_OPENCV=OFF",
                         "-DMNN_BUILD_FOR_ANDROID_COMMAND=OFF",
