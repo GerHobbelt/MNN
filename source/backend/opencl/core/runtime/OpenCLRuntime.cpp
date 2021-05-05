@@ -307,23 +307,17 @@ uint64_t OpenCLRuntime::maxAllocSize() const {
 }
 
 bool OpenCLRuntime::loadProgram(const std::string &programName, cl::Program *program) {
-    return OpenCLRuntime::loadPrograms(std::vector<std::string>{programName}, program);
-}
-
-bool OpenCLRuntime::loadPrograms(const std::vector<std::string> &programNames, cl::Program *program) {
-    cl::Program::Sources sources;
-    for (auto programName : programNames) {
-        auto it_source = OpenCLProgramMap.find(programName);
-        if (it_source != OpenCLProgramMap.end()) {
-            std::string source(it_source->second.begin(), it_source->second.end());
-            sources.push_back(source);
-        } else {
-            MNN_PRINT("Can't find kernel source '%s' !\n", programName.c_str());
-            return false;
-        }
+    auto it_source = OpenCLProgramMap.find(programName);
+    if (it_source != OpenCLProgramMap.end()) {
+        cl::Program::Sources sources;
+        std::string source(it_source->second.begin(), it_source->second.end());
+        sources.push_back(source);
+        *program = cl::Program(context(), sources);
+        return true;
+    } else {
+        MNN_PRINT("Can't find kernel source '%s' !\n", programName.c_str());
+        return false;
     }
-    *program = cl::Program(context(), sources);
-    return true;
 }
 
 bool OpenCLRuntime::buildProgram(const std::string &buildOptionsStr, cl::Program *program) {

@@ -106,7 +106,6 @@ public:
     void setCache(std::pair<const void*, size_t> cache);
 private:
     bool loadProgram(const std::string &programName, cl::Program *program);
-    bool loadPrograms(const std::vector<std::string> &programNames, cl::Program *program);
     bool buildProgram(const std::string &buildOptionsStr, cl::Program *program);
     bool getDeviceSupportsExtension(const cl::Device &device, const char *extensionName);
     void setGpuMode(const int cl_mode_num);
