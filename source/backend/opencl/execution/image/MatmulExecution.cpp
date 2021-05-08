@@ -25,12 +25,16 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
     Tensor *output = outputs[0];
 
     std::vector<int> input0Shape = tensorShapeFormat(input0);
+    input0->printShape();
     std::vector<int> input1Shape = tensorShapeFormat(input1);
+    input1->printShape();
     std::vector<int> outputShape = tensorShapeFormat(output);
-    
+    output->printShape();
+
+    std::string kernelName;
     if (mKernel.get() == nullptr) {
 
-        std::string kernelName;
+//        std::string kernelName;
         std::set<std::string> buildOptions;
         if(mTransposeA) {
             kernelName = mTransposeB ? "matmul_transA_transB":"matmul_transA";
@@ -56,19 +60,23 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         const int heightblocks        = UP_DIV(height, 4);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(heightblocks)};
-            int idx            = 0;
-            mKernel.setArg(idx++, mGlobalWorkSize[0]);
-            mKernel.setArg(idx++, mGlobalWorkSize[1]);
-            mKernel.setArg(idx++, openCLImage(input0));
-            mKernel.setArg(idx++, openCLImage(input1));
-            if(inputs.size() > 2) {
-                mKernel.setArg(idx++, openCLImage(inputs[2]));
-            }
-            mKernel.setArg(idx++, openCLImage(output));
-            mKernel.setArg(idx++, static_cast<int>(outputChannel));
-            mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
-            mKernel.setArg(idx++, static_cast<int>(height));
-            mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
+        int idx            = 0;
+        mKernel.setArg(idx++, mGlobalWorkSize[0]);
+        mKernel.setArg(idx++, mGlobalWorkSize[1]);
+        mKernel.setArg(idx++, openCLImage(input0));
+        mKernel.setArg(idx++, openCLImage(input1));
+        if(inputs.size() > 2) {
+            mKernel.setArg(idx++, openCLImage(inputs[2]));
+        }
+        mKernel.setArg(idx++, openCLImage(output));
+        mKernel.setArg(idx++, static_cast<int>(outputChannel));
+        mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
+        mKernel.setArg(idx++, static_cast<int>(height));
+        mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
+        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i\theightblocks: %i"
+                  "\tmGlobalWorkSize[0]: %i\tmGlobalWorkSize[1]: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
+                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, heightblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
     else {
         const int height        = input0Shape.at(0);
@@ -90,7 +98,13 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         mKernel.setArg(idx++, static_cast<int>(outputChannel));
         mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
         mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
+
+        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i"
+                  "\tglobal_size_dim0: %i\tglobal_size_dim1: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
+                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
+
     return NO_ERROR;
 }
 

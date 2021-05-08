@@ -84,13 +84,13 @@ std::map<Express::VARP, Express::VARP> SGD::onGetNextParameter(Express::VARP los
 
     auto gradTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("OpGrad::grad() finished");
+//    MNN_PRINT("OpGrad::grad() finished");
 
     auto parameters = module()->parameters();
 
     auto parametersTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("module()->parameters() finished");
+//    MNN_PRINT("module()->parameters() finished");
 
     std::vector<VARP> prepareCompute;
     for (auto iter : parameters) {
@@ -104,12 +104,12 @@ std::map<Express::VARP, Express::VARP> SGD::onGetNextParameter(Express::VARP los
 
     auto createPrepareComputeTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("createPrepareCompute");
+//    MNN_PRINT("createPrepareCompute");
 
     Variable::prepareCompute(prepareCompute);
     auto prepareComputeTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("prepareCompute() finished");
+//    MNN_PRINT("prepareCompute() finished");
 
 
     std::vector<VARP> replaceOp(prepareCompute.size());
@@ -126,7 +126,7 @@ std::map<Express::VARP, Express::VARP> SGD::onGetNextParameter(Express::VARP los
 
     auto createReplaceTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("createReplace");
+//    MNN_PRINT("createReplace");
 
     for (int i=0; i<prepareCompute.size(); ++i) {
         Variable::replace(prepareCompute[i], replaceOp[i]);
@@ -134,7 +134,7 @@ std::map<Express::VARP, Express::VARP> SGD::onGetNextParameter(Express::VARP los
 
     auto replaceTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("Variable::replace()");
+//    MNN_PRINT("Variable::replace()");
 
     for (auto& iter : grad) {
         // apply regularization
@@ -149,26 +149,26 @@ std::map<Express::VARP, Express::VARP> SGD::onGetNextParameter(Express::VARP los
 
     auto applyTime = (float)_IntervalTimer.durationInUs();
     _IntervalTimer.reset();
-    MNN_PRINT("Apply");
+//    MNN_PRINT("Apply");
     auto duration = (float)_TotalTimer.durationInUs();
 
-    MNN_PRINT("onGetNextParameter complete in %f ms.\n"
-              "\tOpGrad::grad() complete in %f ms (%f %%)\n"
-              "\tmodule()->parameters() complete in %f ms (%f %%)\n"
-              "\tcreatePrepareCompute complete in %f ms (%f %%)\n"
-              "\tprepareCompute() complete in %f ms (%f %%)\n"
-              "\tcreateReplace complete in %f ms (%f %%)\n"
-              "\tVariable::replace() complete in %f ms (%f %%)\n"
-              "\tApply complete in %f ms (%f %%)\n",
-              duration/1000.0f,
-            gradTime / 1000.0f, gradTime / duration * 100,
-            parametersTime / 1000.0f, parametersTime / duration * 100,
-            createPrepareComputeTime / 1000.0f, createPrepareComputeTime / duration * 100,
-            prepareComputeTime / 1000.0f, prepareComputeTime / duration * 100,
-            createReplaceTime / 1000.0f, createReplaceTime / duration * 100,
-            replaceTime / 1000.0f, replaceTime / duration * 100,
-            applyTime / 1000.0f, applyTime / duration * 100
-            );
+//    MNN_PRINT("onGetNextParameter complete in %f ms.\n"
+//              "\tOpGrad::grad() complete in %f ms (%f %%)\n"
+//              "\tmodule()->parameters() complete in %f ms (%f %%)\n"
+//              "\tcreatePrepareCompute complete in %f ms (%f %%)\n"
+//              "\tprepareCompute() complete in %f ms (%f %%)\n"
+//              "\tcreateReplace complete in %f ms (%f %%)\n"
+//              "\tVariable::replace() complete in %f ms (%f %%)\n"
+//              "\tApply complete in %f ms (%f %%)\n",
+//              duration/1000.0f,
+//            gradTime / 1000.0f, gradTime / duration * 100,
+//            parametersTime / 1000.0f, parametersTime / duration * 100,
+//            createPrepareComputeTime / 1000.0f, createPrepareComputeTime / duration * 100,
+//            prepareComputeTime / 1000.0f, prepareComputeTime / duration * 100,
+//            createReplaceTime / 1000.0f, createReplaceTime / duration * 100,
+//            replaceTime / 1000.0f, replaceTime / duration * 100,
+//            applyTime / 1000.0f, applyTime / duration * 100
+//            );
 
     return grad;
 }
