@@ -17,6 +17,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags ""
+//                cppFlags "-DMATMUL_V2"
                 arguments "-DMNN_USE_LOGCAT=ON",
                         "-DMNN_USE_SYSTEM_LIB=OFF",
                         "-DMNN_VULKAN=OFF",

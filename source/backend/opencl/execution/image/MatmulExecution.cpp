@@ -7,6 +7,7 @@
 //
 
 #include "backend/opencl/execution/image/MatmulExecution.hpp"
+//#include <string>
 
 namespace MNN {
 namespace OpenCL {
@@ -17,19 +18,9 @@ MatMulExecution::MatMulExecution(const std::vector<Tensor *> &inputs, const MNN:
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
     mAreadySetArg  = false;
 }
+
 ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
-
-    Tensor *input0 = inputs[0];
-    Tensor *input1 = inputs[1];
-    Tensor *output = outputs[0];
-
-    std::vector<int> input0Shape = tensorShapeFormat(input0);
-    input0->printShape();
-    std::vector<int> input1Shape = tensorShapeFormat(input1);
-    input1->printShape();
-    std::vector<int> outputShape = tensorShapeFormat(output);
-    output->printShape();
 
     std::string kernelName;
     if (mKernel.get() == nullptr) {
@@ -45,9 +36,47 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         if(inputs.size() > 2) {
             buildOptions.emplace("-DBIAS");
         }
+#ifdef MATMUL_V2
+        buildOptions.emplace("-DMATMUL_V2");
+#endif
         mKernel           = runtime->buildKernel("matmul", kernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
     }
+
+#ifndef MATMUL_V2
+    Tensor *input0 = inputs[0];
+    Tensor *input1 = inputs[1];
+    Tensor *output = outputs[0];
+
+    std::vector<int> input0Shape = tensorShapeFormat(input0);
+//    input0->printShape();
+//    std::string tmp = "(";
+//    for ( int i : input0Shape) {
+//        tmp += " " + std::to_string(i) + ",";
+//    }
+//    tmp.pop_back();
+//    tmp += ")";
+//    MNN_PRINT("%s", tmp.c_str());
+
+    std::vector<int> input1Shape = tensorShapeFormat(input1);
+//    input1->printShape();
+//    tmp = "(";
+//    for ( int i : input1Shape) {
+//        tmp += " " + std::to_string(i) + ",";
+//    }
+//    tmp.pop_back();
+//    tmp += ")";
+//    MNN_PRINT("%s", tmp.c_str());
+
+    std::vector<int> outputShape = tensorShapeFormat(output);
+//    output->printShape();
+//    tmp = "(";
+//    for ( int i : outputShape) {
+//        tmp += " " + std::to_string(i) + ",";
+//    }
+//    tmp.pop_back();
+//    tmp += ")";
+//    MNN_PRINT("%s", tmp.c_str());
 
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
@@ -104,6 +133,27 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
                   kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
                   mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
+
+#else
+    // C:=A*B
+
+    Tensor *A = inputs[0];
+    Tensor *B = inputs[1];
+    Tensor *C = outputs[0];
+
+    // For 2D matmul, matrix is stored as (N, H, W, C), but is actually (H, 1, 1, W)
+    std::vector<int> aShape = tensorShapeFormat(A); // (M, 1, 1, K)
+    std::vector<int> bShape = tensorShapeFormat(B); // (K, 1, 1, N)
+    std::vector<int> cShape = tensorShapeFormat(C); // (M, 1, 1, N)
+
+    MNN_ASSERT(aShape.at)
+
+    const int M = cShape.at(0);
+    const int K = cShape.at(0);
+    const int N = bShape.at(0);
+
+
+#endif // #ifndef MATMUL_V2
 
     return NO_ERROR;
 }
