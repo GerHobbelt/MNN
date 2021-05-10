@@ -28,6 +28,23 @@ using namespace MNN;
 using namespace MNN::Express;
 using namespace MNN::Train;
 
+static inline int getGpuMode(std::string type, std::string tuning = "WIDE") {
+    if (type.compare("ImageMode") == 0){
+        if (tuning.compare("None") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_NONE;
+        else if (tuning.compare("HEAVY") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_HEAVY;
+        else if (tuning.compare("WIDE") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_WIDE;
+        else if (tuning.compare("NORMAL") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_NORMAL;
+        else if (tuning.compare("FAST") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_FAST;
+    }
+    else if (type.compare("BufferMode") == 0){
+        if (tuning.compare("None") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_NONE;
+        else if (tuning.compare("HEAVY") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_HEAVY;
+        else if (tuning.compare("WIDE") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_WIDE;
+        else if (tuning.compare("NORMAL") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_NORMAL;
+        else if (tuning.compare("FAST") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_FAST;
+    }
+}
+
 void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwardType forward, uint epochs) {
     {
         // Load snapshot
@@ -36,7 +53,7 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
     }
     auto exe = Executor::getGlobalExecutor();
     BackendConfig config;
-    exe->setGlobalExecutorConfig(forward, config, 4);
+    exe->setGlobalExecutorConfig(forward, config, getGpuMode("BufferMode"));
     std::shared_ptr<SGD> sgd(new SGD(model));
     sgd->setMomentum(0.9f);
     // sgd->setMomentum2(0.99f);

@@ -40,6 +40,18 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         if(inputs.size() > 2) {
             buildOptions.emplace("-DBIAS");
         }
+
+#ifndef VECTOR_WIDTH
+#define VECTOR_WIDTH 4
+#endif
+        if (runtime->isSupportedFP16()){
+            buildOptions.emplace("-DFLOATX=half" + std::to_string(VECTOR_WIDTH));
+        } else {
+            buildOptions.emplace("-DFLOATX=float" + std::to_string(VECTOR_WIDTH));
+        }
+        buildOptions.emplace("-DVECTOR_WIDTH=" + std::to_string(VECTOR_WIDTH));
+        buildOptions.emplace("-DvloadX=vload" + std::to_string(VECTOR_WIDTH));
+
         mKernel           = runtime->buildKernel("matmul_buf", mKernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
     }
@@ -51,9 +63,9 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         const int height        = input0Shape.at(3);//input0 H
         const int outputChannel = input0Shape.at(0);//input0 W
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);//input1 WW
-        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
-        const int widthblocks         = UP_DIV(width, 4);
-        const int heightblocks        = UP_DIV(height, 4);
+        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
+        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
+        const int heightblocks        = UP_DIV(height, VECTOR_WIDTH);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(heightblocks)};
         int idx            = 0;
@@ -77,8 +89,8 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         const int height        = input0Shape.at(0);//input0 H
         const int outputChannel = input0Shape.at(3);//input0 W
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);//input1 W
-        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
-        const int widthblocks         = UP_DIV(width, 4);
+        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
+        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(height)};
         int idx            = 0;

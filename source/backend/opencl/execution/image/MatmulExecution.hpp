@@ -28,9 +28,8 @@ private:
     bool mTransposeA;
     bool mTransposeB;
     cl::Kernel mKernel;
+    std::string mKernelName;
     uint32_t mMaxWorkGroupSize;
-    std::vector<int> mInput0Shape;
-    std::vector<int> mInput1Shape;
     bool mAreadySetArg;
     OpenCLBackend *mOpenCLBackend;
     std::vector<uint32_t> mGlobalWorkSize{1, 1};

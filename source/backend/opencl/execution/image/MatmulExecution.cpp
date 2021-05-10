@@ -22,47 +22,6 @@ MatMulExecution::MatMulExecution(const std::vector<Tensor *> &inputs, const MNN:
 ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
-    std::string kernelName;
-    if (mKernel.get() == nullptr) {
-
-//        std::string kernelName;
-        std::set<std::string> buildOptions;
-        if(mTransposeA) {
-            kernelName = mTransposeB ? "matmul_transA_transB":"matmul_transA";
-        } else {
-            kernelName = mTransposeB ? "matmul_transB":"matmul";
-        }
-
-        if(inputs.size() > 2) {
-            buildOptions.emplace("-DBIAS");
-        }
-#define WIDTH 4
-
-#ifndef WIDTH
-#define WIDTH 4
-#endif
-
-#if WIDTH == 4
-        if (runtime->isSupportedFP16()){
-            buildOptions.emplace("-DFLOATX=half4");
-        } else {
-            buildOptions.emplace("-DFLOATX=float4");
-        }
-        buildOptions.emplace("-DWIDTH=4");
-#endif // WIDTH == 4
-#if WIDTH == 16
-        if (runtime->isSupportedFP16()){
-            buildOptions.emplace("-DFLOATX=half16");
-        } else {
-            buildOptions.emplace("-DFLOATX=float16");
-        }
-        buildOptions.emplace("-DWIDTH=16");
-#endif // WIDTH == 16
-
-        mKernel           = runtime->buildKernel("matmul", kernelName, buildOptions);
-        mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
-    }
-
     Tensor *input0 = inputs[0];
     Tensor *input1 = inputs[1];
     Tensor *output = outputs[0];
@@ -71,15 +30,40 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
     std::vector<int> input1Shape = tensorShapeFormat(input1);
     std::vector<int> outputShape = tensorShapeFormat(output);
 
+    if (mKernel.get() == nullptr) {
+        std::set<std::string> buildOptions;
+        if(mTransposeA) {
+            mKernelName = mTransposeB ? "matmul_transA_transB":"matmul_transA";
+        } else {
+            mKernelName = mTransposeB ? "matmul_transB":"matmul";
+        }
+
+        if(inputs.size() > 2) {
+            buildOptions.emplace("-DBIAS");
+        }
+#ifndef VECTOR_WIDTH
+#define VECTOR_WIDTH 4
+#endif
+        if (runtime->isSupportedFP16()){
+            buildOptions.emplace("-DFLOATX=half" + std::to_string(VECTOR_WIDTH));
+        } else {
+            buildOptions.emplace("-DFLOATX=float" + std::to_string(VECTOR_WIDTH));
+        }
+        buildOptions.emplace("-DVECTOR_WIDTH=" + std::to_string(VECTOR_WIDTH));
+
+        mKernel           = runtime->buildKernel("matmul", mKernelName, buildOptions);
+        mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
+    }
+
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
     if(mTransposeA) {
         const int height        = input0Shape.at(3);
         const int outputChannel = input0Shape.at(0);
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);
-        const int outputChannelBlocks = UP_DIV(outputChannel, WIDTH);
-        const int widthblocks         = UP_DIV(width, WIDTH);
-        const int heightblocks        = UP_DIV(height, WIDTH);
+        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
+        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
+        const int heightblocks        = UP_DIV(height, VECTOR_WIDTH);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(heightblocks)};
         int idx            = 0;
@@ -97,15 +81,15 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
 //        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i\theightblocks: %i"
 //                  "\tmGlobalWorkSize[0]: %i\tmGlobalWorkSize[1]: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
-//                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, heightblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+//                  mKernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, heightblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
 //                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
     else {
         const int height        = input0Shape.at(0);
         const int outputChannel = input0Shape.at(3);
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);
-        const int outputChannelBlocks = UP_DIV(outputChannel, WIDTH);
-        const int widthblocks         = UP_DIV(width, WIDTH);
+        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
+        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(height)};
         int idx            = 0;
@@ -123,7 +107,7 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
 
 //        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i"
 //                  "\tglobal_size_dim0: %i\tglobal_size_dim1: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
-//                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+//                  mKernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
 //                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
 

@@ -42,12 +42,12 @@ __kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
     for (short pos = 0; pos < channel_blocks; pos += 1) {
         a = RI_F(input_a, SAMPLER, (int2)(pos, height_idx));
 
-        short remain = (pos + 1) * WIDTH - channels;
+        short remain = (pos + 1) * VECTOR_WIDTH - channels;
 
-        b0 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * WIDTH));
-        b1 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * WIDTH + 1));
-        b2 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * WIDTH + 2));
-        b3 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * WIDTH + 3));
+        b0 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * VECTOR_WIDTH));
+        b1 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * VECTOR_WIDTH + 1));
+        b2 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * VECTOR_WIDTH + 2));
+        b3 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, pos * VECTOR_WIDTH + 3));
 
         if (remain == 3) {
             b1 = 0;
@@ -103,12 +103,12 @@ __kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
     for (short pos = 0; pos < channel_blocks; pos += 1) {
         a = RI_F(input_a, SAMPLER, (int2)(pos, height_idx));
 
-        short remain = (pos + 1) * WIDTH - channels;
+        short remain = (pos + 1) * VECTOR_WIDTH - channels;
 
-        b0 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * WIDTH));
-        b1 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * WIDTH + 1));
-        b2 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * WIDTH + 2));
-        b3 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * WIDTH + 3));
+        b0 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH));
+        b1 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH+ 1));
+        b2 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH + 2));
+        b3 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH + 3));
         if (remain == 3) {
             a.y = 0;
             a.z = 0;
@@ -156,17 +156,17 @@ FLOATX result3 = 0;
 #endif
 
 for (short pos = 0; pos < channel_blocks; pos += 1) {
-    FLOATX a0 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos));
-    FLOATX a1 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos+1));
-    FLOATX a2 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos+2));
-    FLOATX a3 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos+3));
+    FLOATX a0 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos));
+    FLOATX a1 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos+1));
+    FLOATX a2 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos+2));
+    FLOATX a3 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos+3));
 
-    FLOATX b0 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, WIDTH*pos));
-    FLOATX b1 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, WIDTH*pos+1));
-    FLOATX b2 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, WIDTH*pos+2));
-    FLOATX b3 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, WIDTH*pos+3));
+    FLOATX b0 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, VECTOR_WIDTH*pos));
+    FLOATX b1 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, VECTOR_WIDTH*pos+1));
+    FLOATX b2 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, VECTOR_WIDTH*pos+2));
+    FLOATX b3 = RI_F(input_b, SAMPLER, (int2)(width_blocks_idx, VECTOR_WIDTH*pos+3));
 
-    short remain = (pos + 1) * WIDTH - channels;
+    short remain = (pos + 1) * VECTOR_WIDTH - channels;
     a3 = ((remain >= 1) ? v_zero : a3);
     a2 = ((remain >= 2) ? v_zero : a2);
     a1 = ((remain >= 3) ? v_zero : a1);
@@ -202,13 +202,13 @@ for (short pos = 0; pos < channel_blocks; pos += 1) {
     result3.z += dot(a3_trans, b2_trans);
     result3.w += dot(a3_trans, b3_trans);
 }
-WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx), result0);
-if(WIDTH*height_blocks_idx+1 >= height) return;
-WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx+1), result1);
-if(WIDTH*height_blocks_idx+2 >= height) return;
-WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx+2), result2);
-if(WIDTH*height_blocks_idx+3 >= height) return;
-WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx+3), result3);
+WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx), result0);
+if(VECTOR_WIDTH*height_blocks_idx+1 >= height) return;
+WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+1), result1);
+if(VECTOR_WIDTH*height_blocks_idx+2 >= height) return;
+WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+2), result2);
+if(VECTOR_WIDTH*height_blocks_idx+3 >= height) return;
+WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+3), result3);
 
 }
 
@@ -240,17 +240,17 @@ __kernel void matmul_transA_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t inpu
     #endif
 
     for (short pos = 0; pos < channel_blocks; pos += 1) {
-        FLOATX a0 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos));
-        FLOATX a1 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos+1));
-        FLOATX a2 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos+2));
-        FLOATX a3 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, WIDTH*pos+3));
+        FLOATX a0 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos));
+        FLOATX a1 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos+1));
+        FLOATX a2 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos+2));
+        FLOATX a3 = RI_F(input_a, SAMPLER, (int2)(height_blocks_idx, VECTOR_WIDTH*pos+3));
 
-        FLOATX b0 = RI_F(input_b, SAMPLER, (int2)(pos, WIDTH*width_blocks_idx));
-        FLOATX b1 = RI_F(input_b, SAMPLER, (int2)(pos, WIDTH*width_blocks_idx+1));
-        FLOATX b2 = RI_F(input_b, SAMPLER, (int2)(pos, WIDTH*width_blocks_idx+2));
-        FLOATX b3 = RI_F(input_b, SAMPLER, (int2)(pos, WIDTH*width_blocks_idx+3));
+        FLOATX b0 = RI_F(input_b, SAMPLER, (int2)(pos, VECTOR_WIDTH*width_blocks_idx));
+        FLOATX b1 = RI_F(input_b, SAMPLER, (int2)(pos, VECTOR_WIDTH*width_blocks_idx+1));
+        FLOATX b2 = RI_F(input_b, SAMPLER, (int2)(pos, VECTOR_WIDTH*width_blocks_idx+2));
+        FLOATX b3 = RI_F(input_b, SAMPLER, (int2)(pos, VECTOR_WIDTH*width_blocks_idx+3));
         
-        short remain = (pos + 1) * WIDTH - channels;
+        short remain = (pos + 1) * VECTOR_WIDTH - channels;
         a3 = ((remain >= 1) ? v_zero : a3);
         a2 = ((remain >= 2) ? v_zero : a2);
         a1 = ((remain >= 3) ? v_zero : a1);
@@ -282,11 +282,11 @@ __kernel void matmul_transA_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t inpu
         result3.w += dot(a3_trans, b3);
     }
 
-    WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx), result0);
-    if(WIDTH*height_blocks_idx+1 >= height) return;
-    WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx+1), result1);
-    if(WIDTH*height_blocks_idx+2 >= height) return;
-    WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx+2), result2);
-    if(WIDTH*height_blocks_idx+3 >= height) return;
-    WI_F(output_c, (int2)(width_blocks_idx, WIDTH*height_blocks_idx+3), result3);
+    WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx), result0);
+    if(VECTOR_WIDTH*height_blocks_idx+1 >= height) return;
+    WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+1), result1);
+    if(VECTOR_WIDTH*height_blocks_idx+2 >= height) return;
+    WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+2), result2);
+    if(VECTOR_WIDTH*height_blocks_idx+3 >= height) return;
+    WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+3), result3);
 }
