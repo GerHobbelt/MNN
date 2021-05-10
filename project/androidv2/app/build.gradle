@@ -17,7 +17,6 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags ""
-//                cppFlags "-DMATMUL_V2"
                 arguments "-DMNN_USE_LOGCAT=ON",
                         "-DMNN_USE_SYSTEM_LIB=OFF",
                         "-DMNN_VULKAN=OFF",
@@ -32,6 +31,7 @@ android {
                         "-DMNN_OPENMP=ON",
                         "-DMNN_USE_THREAD_POOL=OFF",
                         "-DMNN_BUILD_BENCHMARK=ON",
+                        "-DMNN_OPENCL_PROFILE=OFF",
                         "-DANDROID_STL=c++_shared",
 //                        "-DMNN_BUILD_SHARED_LIBS=ON",
 //                        "-DMNN_SEP_BUILD=ON", // Only valid if MNN_BUILD_SHARED_LIBS=ON

@@ -232,7 +232,7 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
     auto iter      = creators->find(std::make_pair(op->type(), mOpenCLRuntime->getGpuMemType()));
 
     if (iter == creators->end()) {
-        #if 0//close log
+        #if 1//close log
         if (nullptr != op->name()) {
             MNN_PRINT("Don't support type %s memObject:%d, %s\n", EnumNameOpType(op->type()), mOpenCLRuntime->getGpuMemType(), op->name()->c_str());
         } else {
@@ -288,7 +288,7 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
         }
 
         if (!valid) {
-            #if 0//close log
+            #if 1//close log
             for (auto t : inputs) {
                 auto tensorShape = OpenCL::tensorShapeFormat(t);
                 MNN_PRINT("input n:%d, h:%d, w:%d, c:%d\n", tensorShape[0], tensorShape[1], tensorShape[2], tensorShape[3]);
@@ -305,7 +305,7 @@ Execution* OpenCLBackend::onCreate(const std::vector<Tensor*>& inputs, const std
     
     auto exe = iter->second->onCreate(inputs, outputs, op, this);
     if (NULL == exe) {
-        #if 0//close log
+        #if 1//close log
         if (nullptr != op->name()) {
             MNN_PRINT("The Creator Don't support type %s, memObject:%d, %s\n", MNN::EnumNameOpType(op->type()), mOpenCLRuntime->getGpuMemType(), op->name()->c_str());
         } else if (op->type() == OpType_BinaryOp){

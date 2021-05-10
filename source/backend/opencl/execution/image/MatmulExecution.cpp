@@ -36,47 +36,40 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         if(inputs.size() > 2) {
             buildOptions.emplace("-DBIAS");
         }
-#ifdef MATMUL_V2
-        buildOptions.emplace("-DMATMUL_V2");
+#define WIDTH 4
+
+#ifndef WIDTH
+#define WIDTH 4
 #endif
+
+#if WIDTH == 4
+        if (runtime->isSupportedFP16()){
+            buildOptions.emplace("-DFLOATX=half4");
+        } else {
+            buildOptions.emplace("-DFLOATX=float4");
+        }
+        buildOptions.emplace("-DWIDTH=4");
+#endif // WIDTH == 4
+#if WIDTH == 16
+        if (runtime->isSupportedFP16()){
+            buildOptions.emplace("-DFLOATX=half16");
+        } else {
+            buildOptions.emplace("-DFLOATX=float16");
+        }
+        buildOptions.emplace("-DWIDTH=16");
+#endif // WIDTH == 16
+
         mKernel           = runtime->buildKernel("matmul", kernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
     }
 
-#ifndef MATMUL_V2
     Tensor *input0 = inputs[0];
     Tensor *input1 = inputs[1];
     Tensor *output = outputs[0];
 
     std::vector<int> input0Shape = tensorShapeFormat(input0);
-//    input0->printShape();
-//    std::string tmp = "(";
-//    for ( int i : input0Shape) {
-//        tmp += " " + std::to_string(i) + ",";
-//    }
-//    tmp.pop_back();
-//    tmp += ")";
-//    MNN_PRINT("%s", tmp.c_str());
-
     std::vector<int> input1Shape = tensorShapeFormat(input1);
-//    input1->printShape();
-//    tmp = "(";
-//    for ( int i : input1Shape) {
-//        tmp += " " + std::to_string(i) + ",";
-//    }
-//    tmp.pop_back();
-//    tmp += ")";
-//    MNN_PRINT("%s", tmp.c_str());
-
     std::vector<int> outputShape = tensorShapeFormat(output);
-//    output->printShape();
-//    tmp = "(";
-//    for ( int i : outputShape) {
-//        tmp += " " + std::to_string(i) + ",";
-//    }
-//    tmp.pop_back();
-//    tmp += ")";
-//    MNN_PRINT("%s", tmp.c_str());
 
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
@@ -84,9 +77,9 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         const int height        = input0Shape.at(3);
         const int outputChannel = input0Shape.at(0);
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);
-        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
-        const int widthblocks         = UP_DIV(width, 4);
-        const int heightblocks        = UP_DIV(height, 4);
+        const int outputChannelBlocks = UP_DIV(outputChannel, WIDTH);
+        const int widthblocks         = UP_DIV(width, WIDTH);
+        const int heightblocks        = UP_DIV(height, WIDTH);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(heightblocks)};
         int idx            = 0;
@@ -102,17 +95,17 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
         mKernel.setArg(idx++, static_cast<int>(height));
         mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
-        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i\theightblocks: %i"
-                  "\tmGlobalWorkSize[0]: %i\tmGlobalWorkSize[1]: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
-                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, heightblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
-                  mMaxWorkGroupSize, mLocalWorkSize[0]);
+//        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i\theightblocks: %i"
+//                  "\tmGlobalWorkSize[0]: %i\tmGlobalWorkSize[1]: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
+//                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, heightblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+//                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
     else {
         const int height        = input0Shape.at(0);
         const int outputChannel = input0Shape.at(3);
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);
-        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
-        const int widthblocks         = UP_DIV(width, 4);
+        const int outputChannelBlocks = UP_DIV(outputChannel, WIDTH);
+        const int widthblocks         = UP_DIV(width, WIDTH);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(height)};
         int idx            = 0;
@@ -128,32 +121,12 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
         mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
 
-        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i"
-                  "\tglobal_size_dim0: %i\tglobal_size_dim1: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
-                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
-                  mMaxWorkGroupSize, mLocalWorkSize[0]);
+//        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i"
+//                  "\tglobal_size_dim0: %i\tglobal_size_dim1: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
+//                  kernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+//                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
 
-#else
-    // C:=A*B
-
-    Tensor *A = inputs[0];
-    Tensor *B = inputs[1];
-    Tensor *C = outputs[0];
-
-    // For 2D matmul, matrix is stored as (N, H, W, C), but is actually (H, 1, 1, W)
-    std::vector<int> aShape = tensorShapeFormat(A); // (M, 1, 1, K)
-    std::vector<int> bShape = tensorShapeFormat(B); // (K, 1, 1, N)
-    std::vector<int> cShape = tensorShapeFormat(C); // (M, 1, 1, N)
-
-    MNN_ASSERT(aShape.at)
-
-    const int M = cShape.at(0);
-    const int K = cShape.at(0);
-    const int N = bShape.at(0);
-
-
-#endif // #ifndef MATMUL_V2
 
     return NO_ERROR;
 }
