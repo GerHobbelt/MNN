@@ -12,6 +12,69 @@ return;                                                                         
 
 __constant sampler_t SAMPLER = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;
 
+#define MATMUL_V2
+#ifdef MATMUL_V2
+__kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
+                     __read_only image2d_t input_b,
+#ifdef BIAS
+        __read_only image2d_t input_c,
+#endif
+                     __write_only image2d_t output_c, __private const int K,
+                     __private const int kBlocks) {
+    // C := A * B + bias
+    // A has dims (M, K)
+    // B has dims (K, N)
+    // C has dims (M, N)
+    // TS (tile size) = VECTOR_WIDTH
+    // num nBlocks = UP_DIV(N, TS)
+    // num mBlocks = UP_DIV(M, 1)
+    // num kBlocks = UP_DIV(K, TS)
+
+    const int nBlock_idx = get_global_id(0); // Block index in direction of N
+    const int mBlock_idx = get_global_id(1); // Block index in direction of M
+
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+    FLOATX a;
+    FLOATX b_arr[VECTOR_WIDTH];
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        b_arr[i] = 0;
+    }
+
+#ifdef BIAS
+    FLOATX results = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
+#else
+    FLOATX results = (FLOATX)(0);
+#endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
+        a = RI_F(input_a, SAMPLER, (int2)(kBlock_idx, mBlock_idx));
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            b_arr[i] = RI_F(input_b, SAMPLER, (int2)(nBlock_idx, kBlock_idx * VECTOR_WIDTH + i));
+        }
+        for (short i = 0; i < remain; i++){
+            b_arr[VECTOR_WIDTH - 1 - i] = 0;
+        }
+        // There is no way to avoid typing out this part for each vector size
+        FLOATX btmp_arr[VECTOR_WIDTH];
+#if VECTOR_WIDTH == 2
+        btmp_arr[0] = (FLOATX)(b_arr[0].s0, b_arr[1].s0);
+        btmp_arr[1] = (FLOATX)(b_arr[0].s1, b_arr[1].s1);
+#elif VECTOR_WIDTH == 4
+        btmp_arr[0] = (FLOATX)(b_arr[0].s0, b_arr[1].s0, b_arr[2].s0, b_arr[3].s0);
+        btmp_arr[1] = (FLOATX)(b_arr[0].s1, b_arr[1].s1, b_arr[2].s1, b_arr[3].s1);
+        btmp_arr[2] = (FLOATX)(b_arr[0].s2, b_arr[1].s2, b_arr[2].s2, b_arr[3].s2);
+        btmp_arr[3] = (FLOATX)(b_arr[0].s3, b_arr[1].s3, b_arr[2].s3, b_arr[3].s3);
+#else
+#error Only vector widths 2 and 4 are currently supported
+#endif
+        for(short i = 0; i < VECTOR_WIDTH; i++){
+            results[i] += dot(a, btmp_arr[i]);
+        }
+    }
+    WI_F(output_c, (int2)(nBlock_idx, mBlock_idx), results);
+}
+#else
 __kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                      __read_only image2d_t input_b,
                     #ifdef BIAS
@@ -72,6 +135,7 @@ __kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
     }
     WI_F(output_c, (int2)(width_blocks_idx, height_idx), (FLOATX)(result0, result1, result2, result3));
 }
+#endif
 
 __kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                      __read_only image2d_t input_b,

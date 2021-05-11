@@ -41,6 +41,10 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         if(inputs.size() > 2) {
             buildOptions.emplace("-DBIAS");
         }
+
+#define MATMUL_V2
+#ifdef MATMUL_V2
+
 #ifndef VECTOR_WIDTH
 #define VECTOR_WIDTH 4
 #endif
@@ -57,40 +61,78 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
 
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
+
+    // C:=A*B
+    // A := (M, K)
+    // B := (K, N)
+    // C := (M, N)
+
+    const int M = mTransposeA ? input0Shape.at(3) : input0Shape.at(0); // height
+    const int N = mTransposeB ? input1Shape.at(0) : input1Shape.at(3); // width
+    const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
+    const int kBlocks = UP_DIV(K, VECTOR_WIDTH); // outputChannelBlocks
+    const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
+    const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
+
+    mGlobalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
+
+    int idx            = 0;
+    mKernel.setArg(idx++, mGlobalWorkSize[0]);
+    mKernel.setArg(idx++, mGlobalWorkSize[1]);
+    mKernel.setArg(idx++, openCLImage(input0));
+    mKernel.setArg(idx++, openCLImage(input1));
+    if(inputs.size() > 2) {
+        mKernel.setArg(idx++, openCLImage(inputs[2]));
+    }
+    mKernel.setArg(idx++, openCLImage(output));
+    mKernel.setArg(idx++, static_cast<int>(K));
+    mKernel.setArg(idx++, static_cast<int>(kBlocks));
+    if(mTransposeA) {
+        mKernel.setArg(idx++, static_cast<int>(M));
+    }
+    mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
+
+//        MNN_PRINT("Kernel: %s\tM: %i\tK: %i\tN: %i\tkBlocks: %i\tnBlocks: %i\tmBlocks: %i"
+//                  "\tmGlobalWorkSize[0]: %i\tmGlobalWorkSize[1]: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
+//                  mKernelName.c_str(), M, K, N, kBlocks, nBlocks, mBlocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
+//                  mMaxWorkGroupSize, mLocalWorkSize[0]);
+#else
+        mKernel           = runtime->buildKernel("matmul", kernelName, buildOptions);
+        mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
+    }
+
+    //处理二维矩阵相乘，N C相当于H W
+    //二维矩阵相乘
     if(mTransposeA) {
         const int height        = input0Shape.at(3);
         const int outputChannel = input0Shape.at(0);
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);
-        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
-        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
-        const int heightblocks        = UP_DIV(height, VECTOR_WIDTH);
-        
+        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
+        const int widthblocks         = UP_DIV(width, 4);
+        const int heightblocks        = UP_DIV(height, 4);
+
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(heightblocks)};
-        int idx            = 0;
-        mKernel.setArg(idx++, mGlobalWorkSize[0]);
-        mKernel.setArg(idx++, mGlobalWorkSize[1]);
-        mKernel.setArg(idx++, openCLImage(input0));
-        mKernel.setArg(idx++, openCLImage(input1));
-        if(inputs.size() > 2) {
-            mKernel.setArg(idx++, openCLImage(inputs[2]));
-        }
-        mKernel.setArg(idx++, openCLImage(output));
-        mKernel.setArg(idx++, static_cast<int>(outputChannel));
-        mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
-        mKernel.setArg(idx++, static_cast<int>(height));
-        mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
-//        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i\theightblocks: %i"
-//                  "\tmGlobalWorkSize[0]: %i\tmGlobalWorkSize[1]: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
-//                  mKernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, heightblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
-//                  mMaxWorkGroupSize, mLocalWorkSize[0]);
+            int idx            = 0;
+            mKernel.setArg(idx++, mGlobalWorkSize[0]);
+            mKernel.setArg(idx++, mGlobalWorkSize[1]);
+            mKernel.setArg(idx++, openCLImage(input0));
+            mKernel.setArg(idx++, openCLImage(input1));
+            if(inputs.size() > 2) {
+                mKernel.setArg(idx++, openCLImage(inputs[2]));
+            }
+            mKernel.setArg(idx++, openCLImage(output));
+            mKernel.setArg(idx++, static_cast<int>(outputChannel));
+            mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
+            mKernel.setArg(idx++, static_cast<int>(height));
+            mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
     }
     else {
         const int height        = input0Shape.at(0);
         const int outputChannel = input0Shape.at(3);
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);
-        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
-        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
-        
+        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
+        const int widthblocks         = UP_DIV(width, 4);
+
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(height)};
         int idx            = 0;
         mKernel.setArg(idx++, mGlobalWorkSize[0]);
@@ -104,13 +146,8 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
         mKernel.setArg(idx++, static_cast<int>(outputChannel));
         mKernel.setArg(idx++, static_cast<int>(outputChannelBlocks));
         mLocalWorkSize = {mMaxWorkGroupSize / 64, 64, 0};
-
-//        MNN_PRINT("Kernel: %s\tHeight: %i\tOutputChannel: %i\tWidth: %i\toutputChannelBlocks: %i\twidthblocks: %i"
-//                  "\tglobal_size_dim0: %i\tglobal_size_dim1: %i\tmMaxWorkGroupSize: %i\tmLocalWorkSize[0]: %i\n",
-//                  mKernelName.c_str(), height, outputChannel, width, outputChannelBlocks, widthblocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
-//                  mMaxWorkGroupSize, mLocalWorkSize[0]);
     }
-
+#endif
 
     return NO_ERROR;
 }
