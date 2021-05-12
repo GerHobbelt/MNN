@@ -97,7 +97,7 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
 //                  mKernelName.c_str(), M, K, N, kBlocks, nBlocks, mBlocks, mGlobalWorkSize[0], mGlobalWorkSize[1],
 //                  mMaxWorkGroupSize, mLocalWorkSize[0]);
 #else
-        mKernel           = runtime->buildKernel("matmul", kernelName, buildOptions);
+        mKernel           = runtime->buildKernel("matmul", mKernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
     }
 
@@ -159,13 +159,12 @@ ErrorCode MatMulExecution::onExecute(const std::vector<Tensor *> &inputs, const 
 #endif
 
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
-
     #ifdef ENABLE_OPENCL_TIME_PROFILER
         cl::Event event;
         runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, &event);
         
         int costTime = (int)mOpenCLBackend->getOpenCLRuntime()->getCostTime(&event);
-        MNN_PRINT("kernel cost:%d    us Matmul\n",costTime);
+        MNN_PRINT("kernel cost:%d    us Matmul %s\n",costTime, mKernelName.c_str());
     #else
     runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, nullptr);
     #endif

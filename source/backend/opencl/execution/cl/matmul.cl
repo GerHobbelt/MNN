@@ -57,18 +57,18 @@ __kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
         }
         // There is no way to avoid typing out this part for each vector size
         FLOATX btmp_arr[VECTOR_WIDTH];
-#if VECTOR_WIDTH == 2
-        btmp_arr[0] = (FLOATX)(b_arr[0].s0, b_arr[1].s0);
-        btmp_arr[1] = (FLOATX)(b_arr[0].s1, b_arr[1].s1);
-#elif VECTOR_WIDTH == 4
-        btmp_arr[0] = (FLOATX)(b_arr[0].s0, b_arr[1].s0, b_arr[2].s0, b_arr[3].s0);
-        btmp_arr[1] = (FLOATX)(b_arr[0].s1, b_arr[1].s1, b_arr[2].s1, b_arr[3].s1);
-        btmp_arr[2] = (FLOATX)(b_arr[0].s2, b_arr[1].s2, b_arr[2].s2, b_arr[3].s2);
-        btmp_arr[3] = (FLOATX)(b_arr[0].s3, b_arr[1].s3, b_arr[2].s3, b_arr[3].s3);
-#else
-#error Only vector widths 2 and 4 are currently supported
-#endif
+
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            for(short j = 0; j < VECTOR_WIDTH; j++){
+                // C array indexing treats `btmp_arr` and `b_arr` as a pointer to element 0,
+                // therefore the elements of the vector can be accessed through this method
+                btmp_arr[i][j] = b_arr[j][i];
+            }
+        }
+
         for(short i = 0; i < VECTOR_WIDTH; i++){
+            // C array indexing treats `results` as a pointer to element 0,
+            // therefore the elements of the vector can be accessed through this method
             results[i] += dot(a, btmp_arr[i]);
         }
     }
@@ -137,6 +137,50 @@ __kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
 }
 #endif
 
+#ifdef MATMUL_V2
+__kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
+                            __read_only image2d_t input_b,
+#ifdef BIAS
+        __read_only image2d_t input_c,
+#endif
+                            __write_only image2d_t output_c, __private const int K,
+                            __private const int kBlocks) {
+    const int nBlock_idx    = get_global_id(0);
+    const int mBlock_idx    = get_global_id(1);
+
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+    FLOATX a;
+    FLOATX b_arr[VECTOR_WIDTH];
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        b_arr[i] = 0;
+    }
+
+#ifdef BIAS
+    FLOATX results = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
+#else
+    FLOATX results = (FLOATX)(0);
+#endif
+
+    for (short K = 0; K < kBlocks; K += 1) {
+        a = RI_F(input_a, SAMPLER, (int2)(K, mBlock_idx));
+
+        short remain = (K + 1) * VECTOR_WIDTH - K;
+
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            b_arr[i] = RI_F(input_b, SAMPLER, (int2)(K, nBlock_idx * VECTOR_WIDTH + i));
+        }
+
+        for (short i = 0; i < remain; i++){
+            a[VECTOR_WIDTH - 1 - i] = 0;
+        }
+
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            results[i] += dot(a, b_arr[i])
+        }
+    }
+    WI_F(output_c, (int2)(nBlock_idx, mBlock_idx), results);
+}
+#else
 __kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                      __read_only image2d_t input_b,
                     #ifdef BIAS
@@ -170,7 +214,7 @@ __kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
         short remain = (pos + 1) * VECTOR_WIDTH - channels;
 
         b0 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH));
-        b1 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH+ 1));
+        b1 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH + 1));
         b2 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH + 2));
         b3 = RI_F(input_b, SAMPLER, (int2)(pos, width_blocks_idx * VECTOR_WIDTH + 3));
         if (remain == 3) {
@@ -191,6 +235,7 @@ __kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
     }
     WI_F(output_c, (int2)(width_blocks_idx, height_idx), (FLOATX)(result0, result1, result2, result3));
 }
+#endif
 
 __kernel void matmul_transA(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                  __read_only image2d_t input_b,
