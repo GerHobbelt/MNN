@@ -46,7 +46,7 @@ ErrorCode MatMulExecution::onResize(const std::vector<Tensor *> &inputs, const s
 #ifdef MATMUL_V2
 
 #ifndef VECTOR_WIDTH
-#define VECTOR_WIDTH 4
+#define VECTOR_WIDTH 16
 #endif
         if (runtime->isSupportedFP16()){
             buildOptions.emplace("-DFLOATX=half" + std::to_string(VECTOR_WIDTH));

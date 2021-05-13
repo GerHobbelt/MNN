@@ -19,6 +19,21 @@ __constant sampler_t SAMPLER = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP |
 #error VECTOR_WIDTH must be defined
 #endif
 
+inline FLOAT dotProd(FLOATX A, FLOATX B){
+    FLOAT res = 0;
+#if VECTOR_WIDTH >= 4
+    res += dot(A.s0123, B.s0123);
+#endif
+#if VECTOR_WIDTH >= 8
+    res += dot(A.s4567, B.s4567);
+#endif
+#if VECTOR_WIDTH >= 16
+    res += dot(A.s89ab, B.s89ab);
+    res += dot(A.scdef, B.scdef);
+#endif
+    return res;
+}
+
 inline void transpose(FLOATX *i, FLOATX *o){
 #if VECTOR_WIDTH == 4
     o[0] = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0);
@@ -54,28 +69,28 @@ inline void transpose(FLOATX *i, FLOATX *o){
 #endif
 }
 
-void dot1D(FLOATX *A, FLOATX *B, FLOATX *C){
+inline void dot1D(FLOATX *A, FLOATX *B, FLOATX *C){
 #if VECTOR_WIDTH >= 4
-    C->s0 += dot(*A, B[0]);
-    C->s1 += dot(*A, B[1]);
-    C->s2 += dot(*A, B[2]);
-    C->s3 += dot(*A, B[3]);
+    C->s0 += dotProd(*A, B[0]);
+    C->s1 += dotProd(*A, B[1]);
+    C->s2 += dotProd(*A, B[2]);
+    C->s3 += dotProd(*A, B[3]);
 #endif
 #if VECTOR_WIDTH >= 8
-    C->s4 += dot(*A, B[4]);
-    C->s5 += dot(*A, B[5]);
-    C->s6 += dot(*A, B[6]);
-    C->s7 += dot(*A, B[7]);
+    C->s4 += dotProd(*A, B[4]);
+    C->s5 += dotProd(*A, B[5]);
+    C->s6 += dotProd(*A, B[6]);
+    C->s7 += dotProd(*A, B[7]);
 #endif
 #if VECTOR_WIDTH >= 16
-    C->s8 += dot(*A, B[8]);
-    C->s9 += dot(*A, B[9]);
-    C->sa += dot(*A, B[10]);
-    C->sb += dot(*A, B[11]);
-    C->sc += dot(*A, B[12]);
-    C->sd += dot(*A, B[13]);
-    C->se += dot(*A, B[14]);
-    C->sf += dot(*A, B[15]);
+    C->s8 += dotProd(*A, B[8]);
+    C->s9 += dotProd(*A, B[9]);
+    C->sa += dotProd(*A, B[10]);
+    C->sb += dotProd(*A, B[11]);
+    C->sc += dotProd(*A, B[12]);
+    C->sd += dotProd(*A, B[13]);
+    C->se += dotProd(*A, B[14]);
+    C->sf += dotProd(*A, B[15]);
 #endif
 }
 
@@ -112,6 +127,7 @@ inline void setRemainingToZero(FLOATX *A, short remain){
     A->s1 = ((remain >= 15) ? (FLOAT)(0) : A->s1);
 #endif
 }
+
 
 __kernel void matmul(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                      __read_only image2d_t input_b,
