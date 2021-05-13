@@ -322,89 +322,65 @@ __kernel void matmul_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
 }
 #endif
 
-//#ifdef MATMUL_V2
-//__kernel void matmul_transA(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
-//                            __read_only image2d_t input_b,
-//#ifdef BIAS
-//        __read_only image2d_t input_c,
-//#endif
-//                            __write_only image2d_t output_c,
-//                            __private const int K,
-//                            __private const int kBlocks,
-//                            __private const int M) {
-//    const int nBlock_idx = get_global_id(0);
-//    const int mBlock_idx = get_global_id(1);
-//
-//    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
-//
-//    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
-//    FLOATX result_arr[VECTOR_WIDTH];
-//#ifdef BIAS
-//    FLOATX result_arr[0] = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
-//    for (short i = 1; i < VECTOR_WIDTH; i++){
-//        result_arr[i] = result_arr[0];
-//    }
-//#else
-//    for (short i = 0; i < VECTOR_WIDTH; i++){
-//        result_arr[i] = 0;
-//    }
-//#endif
-//
-//    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
-//
-//        FLOATX a_arr[VECTOR_WIDTH];
-//        FLOATX b_arr[VECTOR_WIDTH];
-//        for(short i = 0; i < VECTOR_WIDTH; i++){
-//            a_arr[i] = RI_F(input_a, SAMPLER, (int2)(mBlock_idx, VECTOR_WIDTH*kBlock_idx + i));
-//            b_arr[i] = RI_F(input_b, SAMPLER, (int2)(nBlock_idx, VECTOR_WIDTH*kBlock_idx + i));
-//        }
-//
-//        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
-//        for (short i = 0; i < remain; i++){
-//            a_arr[VECTOR_WIDTH - 1 - i] = v_zero;
-//        }
-//
-//        FLOATX aTrans_arr[VECTOR_WIDTH];
-//        for (short i = 0; i < VECTOR_WIDTH; i++){
-//            for(short j = 0; j < VECTOR_WIDTH; j++){
-//                // C array indexing treats `aTrans_arr` and `a_arr` as a pointer to element 0,
-//                // therefore the elements of the vector can be accessed through this method
-//                aTrans_arr[i][j] = a_arr[j][i];
-//            }
-//        }
-//
-//        FLOATX bTrans_arr[VECTOR_WIDTH];
-//        for (short i = 0; i < VECTOR_WIDTH; i++){
-//            for(short j = 0; j < VECTOR_WIDTH; j++){
-//                // C array indexing treats `bTrans_arr` and `b_arr` as a pointer to element 0,
-//                // therefore the elements of the vector can be accessed through this method
-//                bTrans_arr[i][j] = b_arr[j][i];
-//            }
-//        }
-//
-//        //matmul
-//        for (short i = 0; i < VECTOR_WIDTH; i++){
-//            for (short j = 0; j < VECTOR_WIDTH; j++){
-//                result_arr[i][j] += dot(aTrans_arr[i], bTrans_arr[j]);
-//            }
-//        }
-//    }
-//
-//    for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx + i >= M); i++){
-//        WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx + i), result_arr[i]);
-//    }
-//
-////    WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx), result0);
-////    if(VECTOR_WIDTH*mBlock_idx+1 >= M) return;
-////    WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx+1), result1);
-////    if(VECTOR_WIDTH*mBlock_idx+2 >= M) return;
-////    WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx+2), result2);
-////    if(VECTOR_WIDTH*mBlock_idx+3 >= M) return;
-////    WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx+3), result3);
-//
-//}
-//#else
+#ifdef MATMUL_V2
+__kernel void matmul_transA(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
+                            __read_only image2d_t input_b,
+#ifdef BIAS
+        __read_only image2d_t input_c,
+#endif
+                            __write_only image2d_t output_c,
+                            __private const int K,
+                            __private const int kBlocks,
+                            __private const int M) {
+    const int nBlock_idx = get_global_id(0);
+    const int mBlock_idx = get_global_id(1);
 
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+
+    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
+    FLOATX result_arr[VECTOR_WIDTH];
+#ifdef BIAS
+    FLOATX result_arr[0] = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
+    for (short i = 1; i < VECTOR_WIDTH; i++){
+        result_arr[i] = result_arr[0];
+    }
+#else
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        result_arr[i] = 0;
+    }
+#endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
+
+        FLOATX a_arr[VECTOR_WIDTH];
+        FLOATX b_arr[VECTOR_WIDTH];
+        for(short i = 0; i < VECTOR_WIDTH; i++){
+            a_arr[i] = RI_F(input_a, SAMPLER, (int2)(mBlock_idx, VECTOR_WIDTH*kBlock_idx + i));
+            b_arr[i] = RI_F(input_b, SAMPLER, (int2)(nBlock_idx, VECTOR_WIDTH*kBlock_idx + i));
+        }
+
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
+        for (short i = 0; i < remain; i++){
+            a_arr[VECTOR_WIDTH - 1 - i] = v_zero;
+        }
+
+        FLOATX aTrans_arr[VECTOR_WIDTH];
+        transpose(a_arr, aTrans_arr);
+
+        FLOATX bTrans_arr[VECTOR_WIDTH];
+        transpose(b_arr, bTrans_arr);
+
+        //matmul
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            dot1D(&(aTrans_arr[i]), bTrans_arr, &(result_arr[i]));
+        }
+    }
+
+    for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx + i >= M); i++){
+        WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx + i), result_arr[i]);
+    }
+}
+#else
 __kernel void matmul_transA(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                  __read_only image2d_t input_b,
                 #ifdef BIAS
@@ -488,8 +464,65 @@ if(VECTOR_WIDTH*height_blocks_idx+3 >= height) return;
 WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+3), result3);
 
 }
-//#endif
+#endif
 
+#ifdef MATMUL_V2
+__kernel void matmul_transA_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
+                                   __read_only image2d_t input_b,
+#ifdef BIAS
+        __read_only image2d_t input_c,
+#endif
+                                   __write_only image2d_t output_c,
+                                   __private const int K,
+                                   __private const int kBlocks,
+                                   __private const int M) {
+    const int nBlock_idx = get_global_id(0);
+    const int mBlock_idx = get_global_id(1);
+
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+
+    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
+    FLOATX result_arr[VECTOR_WIDTH];
+#ifdef BIAS
+    FLOATX result_arr[0] = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
+    for (short i = 1; i < VECTOR_WIDTH; i++){
+        result_arr[i] = result_arr[0];
+    }
+#else
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        result_arr[i] = 0;
+    }
+#endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
+
+        FLOATX a_arr[VECTOR_WIDTH];
+        FLOATX b_arr[VECTOR_WIDTH];
+
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            a_arr[i] = RI_F(input_a, SAMPLER, (int2)(mBlock_idx, VECTOR_WIDTH*kBlock_idx + i));
+            b_arr[i] = RI_F(input_b, SAMPLER, (int2)(kBlock_idx, VECTOR_WIDTH*nBlock_idx + i));
+        }
+
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
+        for (short i = 0; i < remain; i++){
+            a_arr[VECTOR_WIDTH - 1 - i] = v_zero;
+        }
+
+        FLOATX aTrans_arr[VECTOR_WIDTH];
+        transpose(a_arr, aTrans_arr);
+
+        //matmul
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            dot1D(&(aTrans_arr[i]), b_arr, &(result_arr[i]));
+        }
+    }
+
+    for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
+        WI_F(output_c, (int2)(nBlock_idx, VECTOR_WIDTH*mBlock_idx+i), result_arr[i]);
+    }
+}
+#else
 __kernel void matmul_transA_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t input_a,
                      __read_only image2d_t input_b,
                     #ifdef BIAS
@@ -568,3 +601,4 @@ __kernel void matmul_transA_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t inpu
     if(VECTOR_WIDTH*height_blocks_idx+3 >= height) return;
     WI_F(output_c, (int2)(width_blocks_idx, VECTOR_WIDTH*height_blocks_idx+3), result3);
 }
+#endif
