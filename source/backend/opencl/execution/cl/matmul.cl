@@ -500,7 +500,7 @@ __kernel void matmul_transA_transB(GLOBAL_SIZE_2_DIMS __read_only image2d_t inpu
     FLOATX v_zero = (FLOATX)((FLOAT)0.0);
     FLOATX result_arr[VECTOR_WIDTH];
 #ifdef BIAS
-    FLOATX result_arr[0] = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
+    result_arr[0] = RI_F(input_c, SAMPLER, (int2)(nBlock_idx, 0));
     for (short i = 1; i < VECTOR_WIDTH; i++){
         result_arr[i] = result_arr[0];
     }

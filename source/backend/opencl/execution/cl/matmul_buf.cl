@@ -165,8 +165,6 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         }
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
-
-        #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < remain; i++){
             b_arr[VECTOR_WIDTH - 1 - i] = 0;
         }
@@ -287,7 +285,7 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
             b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
         }
 
-        short remain = (kBlock_idx + 1) * 4 - K;
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
         setRemainingToZero(&a, remain);
 
         dot1D(&a, b_arr, &results);
@@ -357,7 +355,74 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     vstoreX((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
 }
 #endif
+#ifdef MATMUL_V2
+__kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
+        __global const FLOAT* input_a,
+        __global const FLOAT* input_b,
+#ifdef BIAS
+        __global const FLOAT* input_c,
+#endif
+        __global FLOAT* output_c,
+        __private const int K,
+        __private const int kBlocks,
+        __private const int M,
+        __private const int mBlocks,
+        __private const int nBlocks) {
+    const int nBlock_idx = get_global_id(0);
+    const int mBlock_idx = get_global_id(1);
 
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+
+    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
+    FLOATX result_arr[VECTOR_WIDTH];
+    #ifdef BIAS
+    result_arr[0] = vloadX(nBlock_idx, input_c);
+    #pragma unroll VECTOR_WIDTH-1
+    for (short i = 1; i < VECTOR_WIDTH; i++){
+        result_arr[i] = result_arr[0];
+    }
+    #else
+    #pragma unroll VECTOR_WIDTH
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        result_arr[i] = (FLOATX)(0);
+    }
+    #endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
+        const int inpa_offset = (VECTOR_WIDTH*kBlock_idx) * mBlocks + mBlock_idx;
+        const int inpb_offset = (VECTOR_WIDTH*kBlock_idx) * nBlocks + nBlock_idx;
+
+        FLOATX a_arr[VECTOR_WIDTH];
+        FLOATX b_arr[VECTOR_WIDTH];
+#pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            a_arr[i] = vloadX(inpa_offset + (mBlocks*i), input_a);
+            b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
+        }
+
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
+        for (short i = 0; i < remain; i++){
+            a_arr[VECTOR_WIDTH - 1 - i] = v_zero;
+        }
+
+        FLOATX aTrans_arr[VECTOR_WIDTH];
+        transpose(a_arr, aTrans_arr);
+
+        FLOATX bTrans_arr[VECTOR_WIDTH];
+        transpose(b_arr, bTrans_arr);
+
+        //matmul
+#pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            dot1D(&(aTrans_arr[i]), bTrans_arr, &(result_arr[i]));
+        }
+    }
+    const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
+    for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
+        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
+    }
+}
+#else
 __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
                  __global const FLOAT* input_b,
                 #ifdef BIAS
@@ -447,7 +512,74 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     if(4*height_blocks_idx+3 >= height) return;
     vstoreX(result3, out_offset + width_blocks*3, output_c);
 }
+#endif
 
+#ifdef MATMUL_V2
+__kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
+            __global const FLOAT* input_b,
+            #ifdef BIAS
+            __global const FLOAT* input_c,
+            #endif
+            __global FLOAT* output_c,
+            __private const int K,
+            __private const int kBlocks,
+            __private const int M,
+            __private const int mBlocks,
+            __private const int nBlocks) {
+    const int nBlock_idx = get_global_id(0);
+    const int mBlock_idx = get_global_id(1);
+
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+
+    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
+    FLOATX result_arr[VECTOR_WIDTH];
+    #ifdef BIAS
+    result_arr[0] = vloadX(nBlock_idx, input_c);
+    #pragma unroll VECTOR_WIDTH-1
+    for (short i = 1; i < VECTOR_WIDTH; i++){
+        result_arr[i] = result_arr[0];
+    }
+    #else
+    #pragma unroll VECTOR_WIDTH
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        result_arr[i] = (FLOATX)(0);
+    }
+    #endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
+
+        const int inpa_offset = (VECTOR_WIDTH*kBlock_idx) * mBlocks + mBlock_idx;
+        const int inpb_offset = (VECTOR_WIDTH*nBlock_idx) * kBlocks + kBlock_idx;
+        FLOATX a_arr[VECTOR_WIDTH];
+        FLOATX b_arr[VECTOR_WIDTH];
+
+#pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            a_arr[i] = vloadX(inpa_offset + mBlocks*i, input_a);
+            b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
+        }
+
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
+        for (short i = 0; i < remain; i++){
+            a_arr[VECTOR_WIDTH - 1 - i] = v_zero;
+        }
+
+        FLOATX aTrans_arr[VECTOR_WIDTH];
+        transpose(a_arr, aTrans_arr);
+
+        //matmul
+#pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            dot1D(&(aTrans_arr[i]), b_arr, &(result_arr[i]));
+        }
+    }
+
+    const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
+    for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
+        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
+    }
+}
+#else
 __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
                      __global const FLOAT* input_b,
                     #ifdef BIAS
@@ -532,3 +664,4 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
     if(4*height_blocks_idx+3 >= height) return;
     vstoreX(result3, out_offset + width_blocks*3, output_c);
 }
+#endif
