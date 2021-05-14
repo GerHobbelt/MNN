@@ -88,7 +88,39 @@ inline void dot1D(FLOATX *A, FLOATX *B, FLOATX *C){
 #endif
 }
 
-#define COORD_TO_OFFSET(x, y, width) ((x) * (width) + (y))
+inline void setRemainingToZero(FLOATX *A, short remain){
+#if VECTOR_WIDTH == 4
+    A->s3 = ((remain >= 1) ? (FLOAT)(0) : A->s3);
+    A->s2 = ((remain >= 2) ? (FLOAT)(0) : A->s2);
+    A->s1 = ((remain >= 3) ? (FLOAT)(0) : A->s1);
+#endif
+#if VECTOR_WIDTH == 8
+    A->s7 = ((remain >= 1) ? (FLOAT)(0) : A->s7);
+    A->s6 = ((remain >= 2) ? (FLOAT)(0) : A->s6);
+    A->s5 = ((remain >= 3) ? (FLOAT)(0) : A->s5);
+    A->s4 = ((remain >= 4) ? (FLOAT)(0) : A->s4);
+    A->s3 = ((remain >= 5) ? (FLOAT)(0) : A->s3);
+    A->s2 = ((remain >= 6) ? (FLOAT)(0) : A->s2);
+    A->s1 = ((remain >= 7) ? (FLOAT)(0) : A->s1);
+#endif
+#if VECTOR_WIDTH == 16
+    A->sf =  ((remain >= 1) ? (FLOAT)(0) : A->sf);
+    A->se =  ((remain >= 2) ? (FLOAT)(0) : A->se);
+    A->sd =  ((remain >= 3) ? (FLOAT)(0) : A->sd);
+    A->sc =  ((remain >= 4) ? (FLOAT)(0) : A->sc);
+    A->sb =  ((remain >= 5) ? (FLOAT)(0) : A->sb);
+    A->sa =  ((remain >= 6) ? (FLOAT)(0) : A->sa);
+    A->s9 =  ((remain >= 7) ? (FLOAT)(0) : A->s9);
+    A->s8 =  ((remain >= 8) ? (FLOAT)(0) : A->s8);
+    A->s7 =  ((remain >= 9) ? (FLOAT)(0) : A->s7);
+    A->s6 = ((remain >= 10) ? (FLOAT)(0) : A->s6);
+    A->s5 = ((remain >= 11) ? (FLOAT)(0) : A->s5);
+    A->s4 = ((remain >= 12) ? (FLOAT)(0) : A->s4);
+    A->s3 = ((remain >= 13) ? (FLOAT)(0) : A->s3);
+    A->s2 = ((remain >= 14) ? (FLOAT)(0) : A->s2);
+    A->s1 = ((remain >= 15) ? (FLOAT)(0) : A->s1);
+#endif
+}
 
 #ifndef VECTOR_WIDTH
 #error VECTOR_WIDTH must be defined
@@ -217,6 +249,53 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
 }
 #endif
 
+#ifdef MATMUL_V2
+__kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
+        __global const FLOAT* input_b,
+#ifdef BIAS
+        __global const FLOAT* input_c,
+#endif
+        __global FLOAT* output_c,
+        __private const int K,
+        __private const int kBlocks,
+        __private const int nBlocks) {
+    const int nBlock_idx = get_global_id(0);
+    const int mBlock_idx = get_global_id(1);
+
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+    FLOATX a;
+    FLOATX b_arr[VECTOR_WIDTH];
+
+    #pragma unroll VECTOR_WIDTH
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        b_arr[i] = 0;
+    }
+
+#ifdef BIAS
+    FLOATX results = vloadX(nBlock_idx, input_c);
+#else
+    FLOATX results = (FLOATX)(0);
+#endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
+        const int inpa_offset = (mBlock_idx * kBlocks) + kBlock_idx;
+        a = vloadX(inpa_offset, input_a);
+
+        const int inpb_offset = (nBlock_idx * VECTOR_WIDTH * kBlocks) + kBlock_idx;
+        #pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
+        }
+
+        short remain = (kBlock_idx + 1) * 4 - K;
+        setRemainingToZero(&a, remain);
+
+        dot1D(&a, b_arr, &results);
+    }
+    const int out_offset = mBlock_idx * nBlocks + nBlock_idx;
+    vstoreX(results, out_offset, output_c);
+}
+#else
 __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
                      __global const FLOAT* input_b,
                     #ifdef BIAS
@@ -277,7 +356,7 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     const int out_offset = height_idx * width_blocks + width_blocks_idx;
     vstoreX((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
 }
-
+#endif
 
 __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
                  __global const FLOAT* input_b,
