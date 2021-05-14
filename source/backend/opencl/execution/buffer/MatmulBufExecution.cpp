@@ -78,6 +78,8 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
     const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
 
+    printf("M: %i, N: %i, K: %i, mBlocks: %i, nBlocks: %i, kBlocks: %i\n", M, N, K, mBlocks, nBlocks, kBlocks);
+
     mGlobalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
     int idx            = 0;
     ret |= mKernel.setArg(idx++, mGlobalWorkSize[0]);
@@ -163,6 +165,8 @@ ErrorCode MatMulBufExecution::onExecute(const std::vector<Tensor *> &inputs, con
 #endif
 
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
+
+    printf("Actually running\n");
 
     #ifdef ENABLE_OPENCL_TIME_PROFILER
         cl::Event event;

@@ -13,6 +13,22 @@ return;                                                                         
 #define MATMUL_V2
 #ifdef MATMUL_V2
 
+inline void printFloatX(const FLOATX *f){
+#if VECTOR_WIDTH==4
+    printf("[%f, %f, %f, %f]\n", f->s0, f->s1, f->s2, f->s3);
+#elif VECTOR_WIDTH==8
+    printf("[%f, %f, %f, %f, %f, %f, %f, %f]\n", f->s0, f->s1, f->s2, f->s3, f->s4, f->s5, f->s6, f->s7);
+#elif VECTOR_WIDTH==16
+    printf("[%f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f]\n", f->s0, f->s1, f->s2, f->s3, f->s4, f->s5, f->s6, f->s7, f->s8, f->s9, f->sa, f->sb, f->sc, f->sd, f->se, f->sf);
+#endif
+}
+
+inline void printFloatXX(const FLOATX *f){
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        printFloatX(&(f[i]));
+    }
+}
+
 inline FLOAT dotProd(FLOATX A, FLOATX B){
     FLOAT res = 0;
 #if VECTOR_WIDTH >= 4
@@ -138,6 +154,8 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     const int nBlock_idx = get_global_id(0);// output W
     const int mBlock_idx = get_global_id(1);// output H
 
+    printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
+
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
     FLOATX a;
     FLOATX b_arr[VECTOR_WIDTH];
@@ -153,9 +171,12 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     FLOATX results = (FLOATX)(0);
 #endif
 
-    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
         const int inpa_offset = (mBlock_idx * kBlocks) + kBlock_idx;
         a = vloadX(inpa_offset, input_a);
+
+        printf("a: ");
+        printFloatX(&a);
 
         const int inpb_offset = (kBlock_idx * VECTOR_WIDTH * nBlocks) + nBlock_idx;
 
@@ -163,19 +184,29 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         for (short i = 0; i < VECTOR_WIDTH; i++){
             b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
         }
+        printf("b: \n");
+        printFloatXX(b_arr);
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
         for (short i = 0; i < remain; i++){
             b_arr[VECTOR_WIDTH - 1 - i] = 0;
         }
+        printf("\n");
+        printf("b after remain: \n");
+        printFloatXX(b_arr);
 
         FLOATX btmp_arr[VECTOR_WIDTH];
+
+
         transpose(b_arr, btmp_arr);
 
         dot1D(&a, btmp_arr, &results);
     }
 
     const int out_offset = (mBlock_idx * nBlocks) + nBlock_idx;
+    printf("Result: ");
+    printFloatX(&results);
+
     vstoreX(results, out_offset, output_c);
 }
 #else
@@ -377,7 +408,6 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
     FLOATX result_arr[VECTOR_WIDTH];
     #ifdef BIAS
     result_arr[0] = vloadX(nBlock_idx, input_c);
-    #pragma unroll VECTOR_WIDTH-1
     for (short i = 1; i < VECTOR_WIDTH; i++){
         result_arr[i] = result_arr[0];
     }
@@ -535,7 +565,7 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
     FLOATX result_arr[VECTOR_WIDTH];
     #ifdef BIAS
     result_arr[0] = vloadX(nBlock_idx, input_c);
-    #pragma unroll VECTOR_WIDTH-1
+    #pragma unroll
     for (short i = 1; i < VECTOR_WIDTH; i++){
         result_arr[i] = result_arr[0];
     }
