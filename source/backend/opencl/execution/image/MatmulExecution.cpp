@@ -164,7 +164,7 @@ ErrorCode MatMulExecution::onExecute(const std::vector<Tensor *> &inputs, const 
         runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, &event);
         
         int costTime = (int)mOpenCLBackend->getOpenCLRuntime()->getCostTime(&event);
-        MNN_PRINT("kernel cost:%d    us Matmul %s\n",costTime, mKernelName.c_str());
+        MNN_PRINT("kernel cost:%d    us Matmul %s\n", costTime, mKernelName.c_str());
     #else
     runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, nullptr);
     #endif

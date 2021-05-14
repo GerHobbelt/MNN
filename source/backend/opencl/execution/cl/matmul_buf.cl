@@ -10,6 +10,145 @@ if (input1 >= global_size_dim0 || input2 >= global_size_dim1) { \
 return;                                                                                   \
 }
 
+#define MATMUL_V2
+#ifdef MATMUL_V2
+
+inline FLOAT dotProd(FLOATX A, FLOATX B){
+    FLOAT res = 0;
+#if VECTOR_WIDTH >= 4
+    res += dot(A.s0123, B.s0123);
+#endif
+#if VECTOR_WIDTH >= 8
+    res += dot(A.s4567, B.s4567);
+#endif
+#if VECTOR_WIDTH >= 16
+    res += dot(A.s89ab, B.s89ab);
+    res += dot(A.scdef, B.scdef);
+#endif
+    return res;
+}
+
+inline void transpose(FLOATX *i, FLOATX *o) {
+#if VECTOR_WIDTH == 4
+    o[0] = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0);
+    o[1] = (FLOATX)(i[0].s1, i[1].s1, i[2].s1, i[3].s1);
+    o[2] = (FLOATX)(i[0].s2, i[1].s2, i[2].s2, i[3].s2);
+    o[3] = (FLOATX)(i[0].s3, i[1].s3, i[2].s3, i[3].s3);
+#elif VECTOR_WIDTH == 8
+    o[0]  = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0, i[4].s0, i[5].s0, i[6].s0, i[7].s0);
+    o[1]  = (FLOATX)(i[0].s1, i[1].s1, i[2].s1, i[3].s1, i[4].s1, i[5].s1, i[6].s1, i[7].s1);
+    o[2]  = (FLOATX)(i[0].s2, i[1].s2, i[2].s2, i[3].s2, i[4].s2, i[5].s2, i[6].s2, i[7].s2);
+    o[3]  = (FLOATX)(i[0].s3, i[1].s3, i[2].s3, i[3].s3, i[4].s3, i[5].s3, i[6].s3, i[7].s3);
+    o[4]  = (FLOATX)(i[0].s4, i[1].s4, i[2].s4, i[3].s4, i[4].s4, i[5].s4, i[6].s4, i[7].s4);
+    o[5]  = (FLOATX)(i[0].s5, i[1].s5, i[2].s5, i[3].s5, i[4].s5, i[5].s5, i[6].s5, i[7].s5);
+    o[6]  = (FLOATX)(i[0].s6, i[1].s6, i[2].s6, i[3].s6, i[4].s6, i[5].s6, i[6].s6, i[7].s6);
+    o[7]  = (FLOATX)(i[0].s7, i[1].s7, i[2].s7, i[3].s7, i[4].s7, i[5].s7, i[6].s7, i[7].s7);
+#elif VECTOR_WIDTH == 16
+    o[0]  = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0, i[4].s0, i[5].s0, i[6].s0, i[7].s0, i[8].s0, i[9].s0, i[10].s0, i[11].s0, i[12].s0, i[13].s0, i[14].s0, i[15].s0);
+    o[1]  = (FLOATX)(i[0].s1, i[1].s1, i[2].s1, i[3].s1, i[4].s1, i[5].s1, i[6].s1, i[7].s1, i[8].s1, i[9].s1, i[10].s1, i[11].s1, i[12].s1, i[13].s1, i[14].s1, i[15].s1);
+    o[2]  = (FLOATX)(i[0].s2, i[1].s2, i[2].s2, i[3].s2, i[4].s2, i[5].s2, i[6].s2, i[7].s2, i[8].s2, i[9].s2, i[10].s2, i[11].s2, i[12].s2, i[13].s2, i[14].s2, i[15].s2);
+    o[3]  = (FLOATX)(i[0].s3, i[1].s3, i[2].s3, i[3].s3, i[4].s3, i[5].s3, i[6].s3, i[7].s3, i[8].s3, i[9].s3, i[10].s3, i[11].s3, i[12].s3, i[13].s3, i[14].s3, i[15].s3);
+    o[4]  = (FLOATX)(i[0].s4, i[1].s4, i[2].s4, i[3].s4, i[4].s4, i[5].s4, i[6].s4, i[7].s4, i[8].s4, i[9].s4, i[10].s4, i[11].s4, i[12].s4, i[13].s4, i[14].s4, i[15].s4);
+    o[5]  = (FLOATX)(i[0].s5, i[1].s5, i[2].s5, i[3].s5, i[4].s5, i[5].s5, i[6].s5, i[7].s5, i[8].s5, i[9].s5, i[10].s5, i[11].s5, i[12].s5, i[13].s5, i[14].s5, i[15].s5);
+    o[6]  = (FLOATX)(i[0].s6, i[1].s6, i[2].s6, i[3].s6, i[4].s6, i[5].s6, i[6].s6, i[7].s6, i[8].s6, i[9].s6, i[10].s6, i[11].s6, i[12].s6, i[13].s6, i[14].s6, i[15].s6);
+    o[7]  = (FLOATX)(i[0].s7, i[1].s7, i[2].s7, i[3].s7, i[4].s7, i[5].s7, i[6].s7, i[7].s7, i[8].s7, i[9].s7, i[10].s7, i[11].s7, i[12].s7, i[13].s7, i[14].s7, i[15].s7);
+    o[8]  = (FLOATX)(i[0].s8, i[1].s8, i[2].s8, i[3].s8, i[4].s8, i[5].s8, i[6].s8, i[7].s8, i[8].s8, i[9].s8, i[10].s8, i[11].s8, i[12].s8, i[13].s8, i[14].s8, i[15].s8);
+    o[9]  = (FLOATX)(i[0].s9, i[1].s9, i[2].s9, i[3].s9, i[4].s9, i[5].s9, i[6].s9, i[7].s9, i[8].s9, i[9].s9, i[10].s9, i[11].s9, i[12].s9, i[13].s9, i[14].s9, i[15].s9);
+    o[10] = (FLOATX)(i[0].sa, i[1].sa, i[2].sa, i[3].sa, i[4].sa, i[5].sa, i[6].sa, i[7].sa, i[8].sa, i[9].sa, i[10].sa, i[11].sa, i[12].sa, i[13].sa, i[14].sa, i[15].sa);
+    o[11] = (FLOATX)(i[0].sb, i[1].sb, i[2].sb, i[3].sb, i[4].sb, i[5].sb, i[6].sb, i[7].sb, i[8].sb, i[9].sb, i[10].sb, i[11].sb, i[12].sb, i[13].sb, i[14].sb, i[15].sb);
+    o[12] = (FLOATX)(i[0].sc, i[1].sc, i[2].sc, i[3].sc, i[4].sc, i[5].sc, i[6].sc, i[7].sc, i[8].sc, i[9].sc, i[10].sc, i[11].sc, i[12].sc, i[13].sc, i[14].sc, i[15].sc);
+    o[13] = (FLOATX)(i[0].sd, i[1].sd, i[2].sd, i[3].sd, i[4].sd, i[5].sd, i[6].sd, i[7].sd, i[8].sd, i[9].sd, i[10].sd, i[11].sd, i[12].sd, i[13].sd, i[14].sd, i[15].sd);
+    o[14] = (FLOATX)(i[0].se, i[1].se, i[2].se, i[3].se, i[4].se, i[5].se, i[6].se, i[7].se, i[8].se, i[9].se, i[10].se, i[11].se, i[12].se, i[13].se, i[14].se, i[15].se);
+    o[15] = (FLOATX)(i[0].sf, i[1].sf, i[2].sf, i[3].sf, i[4].sf, i[5].sf, i[6].sf, i[7].sf, i[8].sf, i[9].sf, i[10].sf, i[11].sf, i[12].sf, i[13].sf, i[14].sf, i[15].sf);
+#endif
+}
+
+inline void dot1D(FLOATX *A, FLOATX *B, FLOATX *C){
+#if VECTOR_WIDTH >= 4
+    C->s0 += dotProd(*A, B[0]);
+    C->s1 += dotProd(*A, B[1]);
+    C->s2 += dotProd(*A, B[2]);
+    C->s3 += dotProd(*A, B[3]);
+#endif
+#if VECTOR_WIDTH >= 8
+    C->s4 += dotProd(*A, B[4]);
+    C->s5 += dotProd(*A, B[5]);
+    C->s6 += dotProd(*A, B[6]);
+    C->s7 += dotProd(*A, B[7]);
+#endif
+#if VECTOR_WIDTH >= 16
+    C->s8 += dotProd(*A, B[8]);
+    C->s9 += dotProd(*A, B[9]);
+    C->sa += dotProd(*A, B[10]);
+    C->sb += dotProd(*A, B[11]);
+    C->sc += dotProd(*A, B[12]);
+    C->sd += dotProd(*A, B[13]);
+    C->se += dotProd(*A, B[14]);
+    C->sf += dotProd(*A, B[15]);
+#endif
+}
+
+#define COORD_TO_OFFSET(x, y, width) ((x) * (width) + (y))
+
+#ifndef VECTOR_WIDTH
+#error VECTOR_WIDTH must be defined
+#endif
+
+__kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
+        __global const FLOAT* input_b,
+#ifdef BIAS
+        __global const FLOAT* input_c,
+#endif
+        __global FLOAT* output_c,
+        __private const int K,
+        __private const int kBlocks,
+        __private const int nBlocks) {
+    const int nBlock_idx = get_global_id(0);// output W
+    const int mBlock_idx = get_global_id(1);// output H
+
+    DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+    FLOATX a;
+    FLOATX b_arr[VECTOR_WIDTH];
+
+    #pragma unroll VECTOR_WIDTH
+    for (short i = 0; i < VECTOR_WIDTH; i++){
+        b_arr[i] = 0;
+    }
+
+#ifdef BIAS
+    FLOATX results = vloadX(nBlocks_idx, input_c);
+#else
+    FLOATX results = (FLOATX)(0);
+#endif
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
+        const int inpa_offset = (mBlock_idx * kBlocks) + kBlock_idx;
+        a = vloadX(inpa_offset, input_a);
+
+        const int inpb_offset = (kBlock_idx * VECTOR_WIDTH * nBlocks) + nBlock_idx;
+
+        #pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < VECTOR_WIDTH; i++){
+            b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
+        }
+
+        short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
+
+        #pragma unroll VECTOR_WIDTH
+        for (short i = 0; i < remain; i++){
+            b_arr[VECTOR_WIDTH - 1 - i] = 0;
+        }
+
+        FLOATX btmp_arr[VECTOR_WIDTH];
+        transpose(b_arr, btmp_arr);
+
+        dot1D(&a, btmp_arr, &results);
+    }
+
+    const int out_offset = (mBlock_idx * nBlocks) + nBlock_idx;
+    vstoreX(results, out_offset, output_c);
+}
+#else
 __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
                      __global const FLOAT* input_b,
                      #ifdef BIAS
@@ -74,8 +213,9 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     }
 
     const int out_offset = height_idx * width_blocks + width_blocks_idx;
-    vstore4((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
+    vstoreX((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
 }
+#endif
 
 __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
                      __global const FLOAT* input_b,
@@ -135,7 +275,7 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
         result3 += dot(a, b3);
     }
     const int out_offset = height_idx * width_blocks + width_blocks_idx;
-    vstore4((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
+    vstoreX((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
 }
 
 
@@ -220,13 +360,13 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     }
     const int out_offset = (4*height_blocks_idx) * width_blocks + width_blocks_idx;
 
-    vstore4(result0, out_offset, output_c);
+    vstoreX(result0, out_offset, output_c);
     if(4*height_blocks_idx+1 >= height) return;
-    vstore4(result1, out_offset + width_blocks, output_c);
+    vstoreX(result1, out_offset + width_blocks, output_c);
     if(4*height_blocks_idx+2 >= height) return;
-    vstore4(result2, out_offset + width_blocks*2, output_c);
+    vstoreX(result2, out_offset + width_blocks*2, output_c);
     if(4*height_blocks_idx+3 >= height) return;
-    vstore4(result3, out_offset + width_blocks*3, output_c);
+    vstoreX(result3, out_offset + width_blocks*3, output_c);
 }
 
 __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
@@ -305,11 +445,11 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
 
     const int out_offset = (4*height_blocks_idx) * width_blocks + width_blocks_idx;
 
-    vstore4(result0, out_offset, output_c);
+    vstoreX(result0, out_offset, output_c);
     if(4*height_blocks_idx+1 >= height) return;
-    vstore4(result1, out_offset + width_blocks, output_c);
+    vstoreX(result1, out_offset + width_blocks, output_c);
     if(4*height_blocks_idx+2 >= height) return;
-    vstore4(result2, out_offset + width_blocks*2, output_c);
+    vstoreX(result2, out_offset + width_blocks*2, output_c);
     if(4*height_blocks_idx+3 >= height) return;
-    vstore4(result3, out_offset + width_blocks*3, output_c);
+    vstoreX(result3, out_offset + width_blocks*3, output_c);
 }
