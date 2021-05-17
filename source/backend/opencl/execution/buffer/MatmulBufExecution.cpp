@@ -19,6 +19,8 @@ MatMulBufExecution::MatMulBufExecution(const std::vector<Tensor *> &inputs, cons
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
 }
 ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
+#define MATMUL_V2
+#ifdef MATMUL_V2
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
     Tensor *input0 = inputs[0];
@@ -28,6 +30,28 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     std::vector<int> input0Shape = tensorShapeFormat(input0);
     std::vector<int> input1Shape = tensorShapeFormat(input1);
     std::vector<int> outputShape = tensorShapeFormat(output);
+
+    //处理二维矩阵相乘，N C相当于H W
+    //二维矩阵相乘
+    cl_int ret = CL_SUCCESS;
+
+    // C:=A*B
+    // A := (M, K)
+    // B := (K, N)
+    // C := (M, N)
+    const int M = mTransposeA ? input0Shape.at(3) : input0Shape.at(0); // height
+    const int N = mTransposeB ? input1Shape.at(0) : input1Shape.at(3); // width
+    const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
+
+    int VECTOR_WIDTH;
+    if (M > 12 && N > 12 && K > 12){
+        VECTOR_WIDTH = 16;
+    } else if (M > 4 && N > 4 && K > 4){
+        VECTOR_WIDTH = 8;
+    } else {
+        VECTOR_WIDTH = 4;
+    }
+    MNN_ERROR("VECTOR_WIDTH=%i\tM:%i, N:%i, K:%i\n", VECTOR_WIDTH, M, N, K);
     
     if (mKernel.get() == nullptr) {
         std::set<std::string> buildOptions;
@@ -41,12 +65,6 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
             buildOptions.emplace("-DBIAS");
         }
 
-#define MATMUL_V2
-#ifdef MATMUL_V2
-
-#ifndef VECTOR_WIDTH
-#define VECTOR_WIDTH 4
-#endif
         if (runtime->isSupportedFP16()){
             buildOptions.emplace("-DFLOATX=half" + std::to_string(VECTOR_WIDTH));
         } else {
@@ -61,24 +79,11 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     }
 
 
-    //处理二维矩阵相乘，N C相当于H W
-    //二维矩阵相乘
-    cl_int ret = CL_SUCCESS;
-
-    // C:=A*B
-    // A := (M, K)
-    // B := (K, N)
-    // C := (M, N)
-
-    const int M = mTransposeA ? input0Shape.at(3) : input0Shape.at(0); // height
-    const int N = mTransposeB ? input1Shape.at(0) : input1Shape.at(3); // width
-    const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
-
     const int kBlocks = UP_DIV(K, VECTOR_WIDTH); // outputChannelBlocks
     const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
     const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
 
-    printf("M: %i, N: %i, K: %i, mBlocks: %i, nBlocks: %i, kBlocks: %i\n", M, N, K, mBlocks, nBlocks, kBlocks);
+    printf("%s, VECTOR_WIDTH: %i, M: %i, N: %i, K: %i, mBlocks: %i, nBlocks: %i, kBlocks: %i\n", mKernelName.c_str(), VECTOR_WIDTH, M, N, K, mBlocks, nBlocks, kBlocks);
 
     mGlobalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
     int idx            = 0;
@@ -96,10 +101,33 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         ret |= mKernel.setArg(idx++, static_cast<int>(M));
         ret |= mKernel.setArg(idx++, static_cast<int>(mBlocks));
     }
+    ret |= mKernel.setArg(idx++, static_cast<int>(N));
     ret |= mKernel.setArg(idx++, static_cast<int>(nBlocks));
 
     mLocalWorkSize = localWS2DDefault(mGlobalWorkSize, mMaxWorkGroupSize, mOpenCLBackend->getOpenCLRuntime(), mKernelName, mKernel).first;
 #else
+    auto runtime = mOpenCLBackend->getOpenCLRuntime();
+
+    Tensor *input0 = inputs[0];
+    Tensor *input1 = inputs[1];
+    Tensor *output = outputs[0];
+
+    std::vector<int> input0Shape = tensorShapeFormat(input0);
+    std::vector<int> input1Shape = tensorShapeFormat(input1);
+    std::vector<int> outputShape = tensorShapeFormat(output);
+
+    if (mKernel.get() == nullptr) {
+        std::set<std::string> buildOptions;
+        if(mTransposeA) {
+            mKernelName = mTransposeB ? "matmul_transA_transB_buf":"matmul_transA_buf";
+        } else {
+            mKernelName = mTransposeB ? "matmul_transB_buf":"matmul_buf";
+        }
+
+        if(inputs.size() > 2) {
+            buildOptions.emplace("-DBIAS");
+        }
+
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
     cl_int ret = CL_SUCCESS;

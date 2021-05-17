@@ -2,8 +2,12 @@
 
 set -e
 
+export ANDROID_HOME="/home/nicholas/Android/Sdk"
+export ANDROID_NDK="$ANDROID_HOME/ndk/21.1.6352462"
+export PATH="$PATH:$ANDROID_HOME/platform-tools"
+
 OPENMP="ON"
-VULKAN="ON"
+VULKAN="OFF"
 OPENCL="ON"
 OPENGL="OFF"
 OPENCV="OFF"
@@ -56,6 +60,9 @@ if [ ${CLEAN} -eq 1 ]; then
     make clean
 fi
 
+CL_DIR=/home/nicholas/Documents/MNN/source/backend/opencl/execution/cl
+python3 $CL_DIR/opencl_codegen.py $CL_DIR $CL_DIR/opencl_program.cc 0
+
 cmake ../../../ \
 -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
 -DCMAKE_BUILD_TYPE=Release \
@@ -77,25 +84,27 @@ cmake ../../../ \
 -DMNN_OPENMP=$OPENMP \
 -DMNN_USE_THREAD_POOL=$USE_THREAD_POOL \
 -DMNN_BUILD_BENCHMARK=ON \
+-DMNN_BUILD_TEST=ON \
+-DMNN_OPENCL_PROFILE=ON \
 -DNATIVE_LIBRARY_OUTPUT=. -DNATIVE_INCLUDE_OUTPUT=.
 
-make -j4 runTrainDemo.out train.out
+make -j4 runTrainDemo.out train.out run_test.out
 
 find . -name "*.so" | while read solib; do
     adb push $solib  $ANDROID_DIR
 done
 
-adb push runTrainDemo.out $ANDROID_DIR
-adb shell chmod 0777 $ANDROID_DIR/runTrainDemo.out
+# adb push runTrainDemo.out $ANDROID_DIR
+# adb shell chmod 0777 $ANDROID_DIR/runTrainDemo.out
 
-if [ "" != "$PUSH_MODEL" ]; then
-    adb shell "rm -rf $ANDROID_DIR/benchmark_models"
-    adb push $BENCHMARK_MODEL_DIR $ANDROID_DIR/benchmark_models
-fi
+# if [ "" != "$PUSH_MODEL" ]; then
+#     adb shell "rm -rf $ANDROID_DIR/benchmark_models"
+#     adb push $BENCHMARK_MODEL_DIR $ANDROID_DIR/benchmark_models
+# fi
 
-adb shell "cat /proc/cpuinfo > $ANDROID_DIR/train_benchmark.txt"
-adb shell "echo >> $ANDROID_DIR/train_benchmark.txt"
-adb shell "echo Build Flags: ABI=$ABI  OpenMP=$OPENMP Vulkan=$VULKAN OpenCL=$OPENCL OpenGL=$OPENGL >> $ANDROID_DIR/train_benchmark.txt"
+# adb shell "cat /proc/cpuinfo > $ANDROID_DIR/train_benchmark.txt"
+# adb shell "echo >> $ANDROID_DIR/train_benchmark.txt"
+# adb shell "echo Build Flags: ABI=$ABI  OpenMP=$OPENMP Vulkan=$VULKAN OpenCL=$OPENCL OpenGL=$OPENGL >> $ANDROID_DIR/train_benchmark.txt"
 
 # adb shell "mkdir $ANDROID_DIR/mnist"
 # adb push ../MNN_Additional_Files/mnist/* $ANDROID_DIR/mnist/
@@ -106,8 +115,19 @@ adb shell "echo Build Flags: ABI=$ABI  OpenMP=$OPENMP Vulkan=$VULKAN OpenCL=$OPE
 # Vulkan
 # adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist Vulkan >> $ANDROID_DIR/train_benchmark.txt"
 # OpenCL
-adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist OpenCL >> $ANDROID_DIR/train_benchmark.txt"
+# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/runTrainDemo.out MnistTrainCustom $ANDROID_DIR/mnist OpenCL >> $ANDROID_DIR/train_benchmark.txt"
 
-adb pull $ANDROID_DIR/train_benchmark.txt .
+# adb pull $ANDROID_DIR/train_benchmark.txt .
+
+adb push run_test.out $ANDROID_DIR
+adb shell chmod 0777 $ANDROID_DIR/run_test.out
+
+adb shell "cat /proc/cpuinfo > $ANDROID_DIR/test_opencl.txt"
+adb shell "echo >> $ANDROID_DIR/test_opencl.txt"
+adb shell "echo Build Flags: ABI=$ABI  OpenMP=$OPENMP Vulkan=$VULKAN OpenCL=$OPENCL OpenGL=$OPENGL >> $ANDROID_DIR/test_opencl.txt"
+
+adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out op/matmul 3 >> $ANDROID_DIR/test_opencl.txt"
+
+adb pull $ANDROID_DIR/test_opencl.txt .
 
 cd ../../../

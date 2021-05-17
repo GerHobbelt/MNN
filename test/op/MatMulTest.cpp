@@ -62,17 +62,25 @@ public:
 protected:
     static bool test(MNNForwardType type, const std::string& device_name, const std::string& test_op_name, int height_a,
                      int width_a, int height_b, int width_b, bool tranpose_a, bool tranpose_b) {
+        printf("height_a %i; ", height_a);
+        printf("width_a %i\n", width_a);
+        printf("height_b %i; ", height_b);
+        printf("width_b %i\n", width_b);
         auto input_a = _Input({height_a, width_a}, NCHW);
         auto input_b = _Input({height_b, width_b}, NCHW);
         auto output  = _MatMul(input_a, input_b, tranpose_a, tranpose_b);
         vector<float> data_a, data_b, data_c;
         for (int i = 0; i < height_a * width_a; ++i) {
-            auto c = randomCreate(i);
-            data_a.push_back((float)c / 255.f);
+            // auto c = randomCreate(i);
+            // data_a.push_back((float)c / 255.f);
+            auto c = i;
+            data_a.push_back((float)c);
         }
         for (int i = 0; i < height_b * width_b; ++i) {
-            auto c = randomCreate(10 - i);
-            data_b.push_back((float)c / 255.f);
+            // auto c = randomCreate(10 - i);
+            // data_b.push_back((float)c / 255.f);
+            auto c = i;
+            data_b.push_back((float)c);
         }
         reference_matmul(data_a, data_b, data_c, width_a, width_b, tranpose_a, tranpose_b);
         ::memcpy(input_a->writeMap<float>(), data_a.data(), data_a.size() * sizeof(float));
@@ -87,6 +95,9 @@ protected:
             }
             return false;
         }
+        MNN_PRINT("%s: %d x %d - %d x %d -> %d, %d , transpose: %d, %d, test passed!\n", test_op_name.c_str(),
+                  width_a, height_a, width_b, height_b, output->getInfo()->dim[1], output->getInfo()->dim[0],
+                  tranpose_a, tranpose_b);
         return true;
     }
 };
@@ -97,16 +108,21 @@ public:
 
 protected:
     static bool test(MNNForwardType type, const std::string& device_name) {
-        for (int height_c = 1; height_c <= 20; ++height_c) {
-            for (int width_c = 1; width_c <= 20; ++width_c) {
-                for (int length = 1; length <= 20; ++length) {
+        for (int height_c = 1; height_c <= 64; height_c+=1) {
+            for (int width_c = 1; width_c <= 64; width_c+=1) {
+                for (int length = 1; length <= 64; length+=1) {
+        // for (int height_c = 13; height_c <= 13; height_c+=1) {
+        //     for (int width_c = 17; width_c <= 17; width_c+=1) {
+        //         for (int length = 13; length <= 13; length+=1) {
                     int height_a = height_c, height_b = length, width_a = length, width_b = width_c;
-                    for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a) {
+                    // for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a) {
+                    for (int tranpose_a = 0; tranpose_a <= 0; ++tranpose_a) {
                         int height_a = height_c, width_a = length;
                         if (tranpose_a == 1) {
                             std::swap(height_a, width_a);
                         }
-                        for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b) {
+                        // for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b) {
+                        for (int tranpose_b = 0; tranpose_b <= 0; ++tranpose_b) {
                             int height_b = length, width_b = width_c;
                             if (tranpose_b == 1) {
                                 std::swap(height_b, width_b);

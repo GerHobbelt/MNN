@@ -13,6 +13,219 @@ return;                                                                         
 #define MATMUL_V2
 #ifdef MATMUL_V2
 
+
+#ifndef VECTOR_WIDTH
+#error VECTOR_WIDTH must be defined
+#endif
+
+#define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
+#define ROUND_UP(x, y) (((x) + (y) - (1)) / (y) * (y))
+#define MUST_PRINT() (get_global_id(0) == 0 && get_global_id(1) == 0)
+
+inline FLOATX loadNext(const __global FLOAT* p, const short row, const short col, const short width, const short num_cols, short *num_vec4_moved){
+    // P is pointer to buffer memory
+    // ROW IS ROW_IDX
+    // COL IS COLUMN_IDX WHERE COLUMN_WIDTH=4 IE ITERATOR VALUE
+    // WIDTH IS THE MEMORY WIDTH IE ROUND_UP(K, 4) OR ROUND_UP(N, 4)
+    // NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4 IE UP_DIV(K, 4) OR UP_DIV(N, 4)
+
+    if (MUST_PRINT()){
+        printf("row: %i\tcol: %i\twidth:%i\tnum_cols: %i\n", row, col, width, num_cols);
+    }
+
+#if VECTOR_WIDTH == 4
+    *num_vec4_moved = 1;
+    return vload4(row * num_cols + col, p);
+#elif VECTOR_WIDTH == 8
+    // if the width is perfectly divisible by 8 (2, 4-block widths), always read full 8 element reads
+    // Can possibly become compile-time directive
+    if (width%8==0){
+        *num_vec4_moved = 2;
+        return vload8((row * num_cols + col)/2, p);
+    }
+
+    // if not in the last column, read full 8 elements
+    // must be two vload4 because of indexing multipliers embedded in vloadn
+    // which prevents reading from the middle of n element blocks
+    if (col < num_cols - 1){
+        *num_vec4_moved = 2;
+        return (FLOAT8)(vload4(row * num_cols + col, p), vload4(row * num_cols + col + 1, p));
+    }
+
+    // else the read will be a half-block
+    *num_vec4_moved = 1;
+    return (FLOAT8)(vload4(row * num_cols + col, p), (FLOAT4)(0));
+#elif VECTOR_WIDTH == 16
+    // if the width is perfectly divisible by 16 (4, 4-block widths),
+    // always read full 16 element reads
+    // Can possibly become compile-time directive
+    if (width%16==0){
+        *num_vec4_moved = 4;
+        return vload16((row * num_cols + col)/4, p);
+    }
+
+    // if not in the last 3 columns IE not 12 or less elems remaining, read 16 elems
+    if (col < num_cols - 3){
+        *num_vec4_moved = 4;
+        return (FLOAT16)(vload4(row * num_cols + col, p), vload4(row * num_cols + col + 1, p), vload4(row * num_cols + col + 2, p), vload4(row * num_cols + col + 3, p));
+    }
+
+    // if the width is perfectly divisible by 8 but not 16,
+    // ie width = (floor(num_cols/4))*16 + 8;
+    // therefore read 8 elements w padding
+    // Can possibly become compile-time directive
+    if (width%8==0){
+        *num_vec4_moved = 2;
+//        return (FLOAT16)(vload8((row * num_cols + col)/2, p), (FLOAT8)(0));
+        return (FLOAT16)(vload4(row * num_cols + col, p), vload4(row * num_cols + col + 1, p), (FLOAT8)(0));
+    }
+
+    // num_cols/4 is integer division -> floor(num_cols/4.0)
+    // can possibly be compile time directive
+    short remain = width - (num_cols/4)*16;
+    if (MUST_PRINT())
+        printf("Remain: %i\n", remain);
+
+    if (remain == 4){
+        *num_vec4_moved = 1;
+        return (FLOAT16)(vload4(row * num_cols + col, p), (FLOAT4)(0), (FLOAT8)(0));
+    }
+    if (remain == 12) {
+        *num_vec4_moved = 3;
+        return (FLOAT16)(vload4(row * num_cols + col, p), vload4(row * num_cols + col + 1, p), vload4(row * num_cols + col + 2, p), (FLOAT4)(0));
+    }
+#endif
+}
+
+inline FLOATX load(const short row, short col, const __global FLOAT* p, const short num_blocks, const short num_elements) {
+#if VECTOR_WIDTH == 4
+    return vload4(row*num_blocks + col, p);
+#elif VECTOR_WIDTH == 8
+//    if(MUST_PRINT()){
+//        printf("row: %i\tcol: %i\t ROUND_UP: %i\n", row, col, ROUND_UP(num_elements, 4));
+//    }
+    if (col < num_blocks - 1){
+        if (MUST_PRINT()){
+            printf("Regular Load\n");
+        }
+        return vload8(row * ROUND_UP(num_elements, 4) + col, p);
+    } else {
+        if (MUST_PRINT()){
+            printf("Special Load\n");
+        }
+        if (num_elements - (col * VECTOR_WIDTH) <= 4){
+            return (FLOAT8)(vload4(((row) * ROUND_UP(num_elements, 4)) + col*2, p), (FLOAT4)(0));
+        } else {
+            return vload8(row*num_blocks + col, p);
+        }
+    }
+#elif VECTOR_WIDTH == 16
+    if (col != num_blocks - 1){
+        return vload16(row*num_blocks + col, p);
+    } else {
+        if (num_elements - (col * VECTOR_WIDTH) <= 4){
+            return (FLOAT16)(vload4(row*num_blocks + col*4, p), (FLOAT4)(0), (FLOAT8)(0));
+        } else if (num_elements - (col * VECTOR_WIDTH) <= 8) {
+            return (FLOAT16)(vload8(row*num_blocks + col*2, p), (FLOAT8)(0));
+        } else if (num_elements - (col * VECTOR_WIDTH) <= 12) {
+            return (FLOAT16)(vload8(row*num_blocks + col*2, p), vload4(row*num_blocks + (col+2)*4, p), (FLOAT4)(0));
+        } else {
+            return vload16(row*num_blocks + col, p);
+        }
+    }
+#endif
+}
+
+inline void writeNext(FLOATX *r, __global FLOAT* p, const short row, const short col, const short width, const short num_cols){
+    // r is pointer to results FLOATX
+    // P is pointer to buffer memory
+    // ROW IS ROW_IDX
+    // COL IS COLUMN_IDX WHERE COLUMN_WIDTH=4 IE ITERATOR VALUE
+    // WIDTH IS THE MEMORY WIDTH IE ROUND_UP(K, 4) OR ROUND_UP(N, 4)
+    // NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4 IE UP_DIV(K, 4) OR UP_DIV(N, 4)
+#if VECTOR_WIDTH==4
+    vstore4(*r, row*num_cols+col, p);
+#elif VECTOR_WIDTH==8
+    // if the width is perfectly divisible by 8 (2, 4-block widths), always write full 8 elements
+    // Can possibly become compile-time directive
+    if (width%8==0){
+        vstore8(*r, (row * num_cols + col)/2, p);
+        return;
+    }
+
+    // if not in the last column, write full 8 elements
+    // must be two vstore4 because of indexing multipliers embedded in vstoren
+    // which prevents writing to the middle of n element blocks
+    if (col < num_cols - 1){
+        vstore4(r->s0123, row * num_cols + col, p);
+        vstore4(r->s4567, row * num_cols + col + 1, p);
+        return;
+    }
+
+    // else the write will be a half block
+    vstore4(r->s0123, row * num_cols + col, p);
+#elif VECTOR_WIDTH==16
+    // if the width is perfectly divisible by 16 (4, 4-block widths), always write full 16 elements
+    // Can possibly become compile-time directive
+    if (width%16==0){
+        vstore16(*r, (row*num_cols+col)/4, p);
+        return;
+    }
+
+    // if not in last 3 columns IE not 12 or less elems remaining, read 16 elems
+    if (col < num_cols - 3){
+        vstore4(r->s0123, row * num_cols + col, p);
+        vstore4(r->s4567, row * num_cols + col + 1, p);
+        vstore4(r->s89ab, row * num_cols + col + 2, p);
+        vstore4(r->scdef, row * num_cols + col + 3, p);
+        return;
+    }
+
+    // if the width is perfectly divisible by 8 but not 16,
+    // ie width = (floor(num_cols/4))*16 + 8;
+    // therefore write 8 elements w padding
+    // Can possibly become compile-time directive
+    if (width%8 == 0){
+        vstore4(r->s0123, row * num_cols + col, p);
+        vstore4(r->s4567, row * num_cols + col + 1, p);
+        return;
+    }
+
+    // num_cols/4 is integer division -> floor(num_cols/4.0)
+    // can possibly be compile time directive
+    short remain = width - (num_cols/4)*16;
+
+    if(remain == 4){
+        vstore4(r->s0123, row * num_cols + col, p);
+        return;
+    }
+    if (remain == 12) {
+        vstore4(r->s0123, row * num_cols + col, p);
+        vstore4(r->s4567, row * num_cols + col + 1, p);
+        vstore4(r->s89ab, row * num_cols + col + 2, p);
+    }
+
+#endif
+}
+
+inline void write(FLOATX *r, const short row, const short col, __global FLOAT* p, const short num_blocks, const short num_elements){
+#if VECTOR_WIDTH==4
+    vstore4(*r, row*num_blocks+col, p);
+#elif VECTOR_WIDTH==8
+    if (col < num_blocks - 1){
+        vstore8(*r, row*num_blocks + col, p);
+    } else {
+        if (num_elements - (col * VECTOR_WIDTH) <= 4){
+            vstore4((FLOAT4)(r->s0123), row*num_blocks + col*2, p);
+        } else {
+            vstore8(*r, row*num_blocks + col, p);
+        }
+    }
+#elif VECTOR_WIDTH==16
+//    vstore16(r, row*num_blocks+col, p);
+#endif
+}
+
 inline void printFloatX(const FLOATX *f){
 #if VECTOR_WIDTH==4
     printf("[%f, %f, %f, %f]\n", f->s0, f->s1, f->s2, f->s3);
@@ -138,10 +351,6 @@ inline void setRemainingToZero(FLOATX *A, short remain){
 #endif
 }
 
-#ifndef VECTOR_WIDTH
-#error VECTOR_WIDTH must be defined
-#endif
-
 __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         __global const FLOAT* input_b,
 #ifdef BIAS
@@ -150,11 +359,14 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         __global FLOAT* output_c,
         __private const int K,
         __private const int kBlocks,
+        __private const int N,
         __private const int nBlocks) {
     const int nBlock_idx = get_global_id(0);// output W
     const int mBlock_idx = get_global_id(1);// output H
 
-    printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
+    if(MUST_PRINT()){
+        printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
+    }
 
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
     FLOATX a;
@@ -171,43 +383,61 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     FLOATX results = (FLOATX)(0);
 #endif
 
-    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
-        const int inpa_offset = (mBlock_idx * kBlocks) + kBlock_idx;
-        a = vloadX(inpa_offset, input_a);
+    const int num_vec4_in_K = UP_DIV(K, 4);
+    const int num_vec4_in_N = UP_DIV(N, 4);
 
-        printf("a: ");
-        printFloatX(&a);
+    int offset_iter_K = 0;
+    int offset_iter_N = 0;
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
+        short offset_movement = 0;
+        a = loadNext(input_a, mBlock_idx, offset_iter_K, ROUND_UP(K, 4), num_vec4_in_K, &offset_movement);
+
+        if (MUST_PRINT()){
+            printf("a starting at mBlock_idx=%i kBlock_idx=%i offset_iter_K=%i:\n", mBlock_idx, kBlock_idx, offset_iter_K);
+            printf("offset_movement=%i\n", offset_movement);
+            printFloatX(&a);
+        }
+        offset_iter_K += offset_movement;
 
         const int inpb_offset = (kBlock_idx * VECTOR_WIDTH * nBlocks) + nBlock_idx;
 
+
+
         #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-            b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
+            b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &offset_movement);
+//            if (MUST_PRINT()){
+//                printf("b%i: \n", i);
+//                printFloatX(&(b_arr[i]));
+//            }
         }
-        printf("b: \n");
-        printFloatXX(b_arr);
+
+        if (MUST_PRINT()){
+            printf("b: \n");
+            printFloatXX(b_arr);
+        }
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
         for (short i = 0; i < remain; i++){
             b_arr[VECTOR_WIDTH - 1 - i] = 0;
         }
-        printf("\n");
-        printf("b after remain: \n");
-        printFloatXX(b_arr);
 
         FLOATX btmp_arr[VECTOR_WIDTH];
-
-
         transpose(b_arr, btmp_arr);
 
         dot1D(&a, btmp_arr, &results);
     }
 
     const int out_offset = (mBlock_idx * nBlocks) + nBlock_idx;
-    printf("Result: ");
-    printFloatX(&results);
 
-    vstoreX(results, out_offset, output_c);
+    if (MUST_PRINT()){
+        printf("Result: ");
+        printFloatX(&results);
+    }
+
+//    write(&results, mBlock_idx, nBlock_idx, output_c, nBlocks, N);
+    writeNext(&results, output_c, mBlock_idx, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
 }
 #else
 __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,

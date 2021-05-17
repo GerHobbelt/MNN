@@ -53,7 +53,7 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
     }
     auto exe = Executor::getGlobalExecutor();
     BackendConfig config;
-    exe->setGlobalExecutorConfig(forward, config, getGpuMode("ImageMode"));
+    exe->setGlobalExecutorConfig(forward, config, getGpuMode("BufferMode"));
     std::shared_ptr<SGD> sgd(new SGD(model));
     sgd->setMomentum(0.9f);
     // sgd->setMomentum2(0.99f);
