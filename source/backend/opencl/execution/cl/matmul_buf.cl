@@ -365,10 +365,6 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     const int nBlock_idx = get_global_id(0);// output W
     const int mBlock_idx = get_global_id(1);// output H
 
-    if(MUST_PRINT()){
-        printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
-    }
-
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
     FLOATX a;
     FLOATX b_arr[VECTOR_WIDTH];
@@ -388,34 +384,15 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     const int num_vec4_in_N = UP_DIV(N, 4);
 
     int offset_iter_K = 0;
-    int offset_iter_N = 0;
 
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
         short offset_movement = 0;
         a = loadNext(input_a, mBlock_idx, offset_iter_K, ROUND_UP(K, 4), num_vec4_in_K, &offset_movement);
 
-        if (MUST_PRINT()){
-            printf("a starting at mBlock_idx=%i kBlock_idx=%i offset_iter_K=%i:\n", mBlock_idx, kBlock_idx, offset_iter_K);
-            printf("offset_movement=%i\n", offset_movement);
-            printFloatX(&a);
-        }
-
-
-        const int inpb_offset = (kBlock_idx * VECTOR_WIDTH * nBlocks) + nBlock_idx;
-
         #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
             int dummy = 0;
             b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &dummy);
-//            if (MUST_PRINT()){
-//                printf("b%i: \n", i);
-//                printFloatX(&(b_arr[i]));
-//            }
-        }
-
-        if (MUST_PRINT()){
-            printf("b: \n");
-            printFloatXX(b_arr);
         }
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
@@ -431,14 +408,6 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         offset_iter_K += offset_movement;
     }
 
-    const int out_offset = (mBlock_idx * nBlocks) + nBlock_idx;
-
-    if (MUST_PRINT()){
-        printf("Result: ");
-        printFloatX(&results);
-    }
-
-//    write(&results, mBlock_idx, nBlock_idx, output_c, nBlocks, N);
     writeNext(&results, output_c, mBlock_idx, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
 }
 #else
@@ -524,10 +493,6 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
 
-    if(MUST_PRINT()){
-        printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
-    }
-
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
     FLOATX a;
     FLOATX b_arr[VECTOR_WIDTH];
@@ -547,29 +512,15 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     const int num_vec4_in_N = UP_DIV(N, 4);
 
     int offset_iter_K = 0;
-    int offset_iter_N = 0;
 
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
         short offset_movement = 0;
         a = loadNext(input_a, mBlock_idx, offset_iter_K, ROUND_UP(K, 4), num_vec4_in_K, &offset_movement);
 
-        if (MUST_PRINT()){
-            printf("a starting at mBlock_idx=%i kBlock_idx=%i offset_iter_K=%i:\n", mBlock_idx, kBlock_idx, offset_iter_K);
-            printf("offset_movement=%i\n", offset_movement);
-            printFloatX(&a);
-        }
-
-//        const int inpb_offset = (nBlock_idx * VECTOR_WIDTH * kBlocks) + kBlock_idx;
         #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-//            b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
             int dummy = 0;
             b_arr[i] = loadNext(input_b, nBlock_idx * VECTOR_WIDTH + i, offset_iter_K, ROUND_UP(K, 4), num_vec4_in_K, &dummy);
-        }
-
-        if (MUST_PRINT()){
-            printf("b: \n");
-            printFloatXX(b_arr);
         }
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
@@ -579,13 +530,6 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
         offset_iter_K += offset_movement;
     }
 
-    if (MUST_PRINT()){
-        printf("Result: ");
-        printFloatX(&results);
-    }
-
-//    const int out_offset = mBlock_idx * nBlocks + nBlock_idx;
-//    vstoreX(results, out_offset, output_c);
     writeNext(&results, output_c, mBlock_idx, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
 }
 #else
@@ -667,10 +611,6 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
 
-    if(MUST_PRINT()){
-        printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
-    }
-
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
 
     FLOATX v_zero = (FLOATX)((FLOAT)0.0);
@@ -688,22 +628,13 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
     #endif
 
     const int num_vec4_in_M = UP_DIV(M, 4);
-    const int num_vec4_in_K = UP_DIV(K, 4);
     const int num_vec4_in_N = UP_DIV(N, 4);
 
-    int offset_iter_K = 0;
-    int offset_iter_N = 0;
-
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
-        const int inpa_offset = (VECTOR_WIDTH*kBlock_idx) * mBlocks + mBlock_idx;
-        const int inpb_offset = (VECTOR_WIDTH*kBlock_idx) * nBlocks + nBlock_idx;
-
         FLOATX a_arr[VECTOR_WIDTH];
         FLOATX b_arr[VECTOR_WIDTH];
 #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-//            a_arr[i] = vloadX(inpa_offset + (mBlocks*i), input_a);
-//            b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
             int dummy = 0;
             a_arr[i] = loadNext(input_a, kBlock_idx*VECTOR_WIDTH + i, mBlock_idx * VECTOR_WIDTH/4, ROUND_UP(M, 4), num_vec4_in_M, &dummy);
             b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &dummy);
@@ -726,9 +657,8 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
             dot1D(&(aTrans_arr[i]), bTrans_arr, &(result_arr[i]));
         }
     }
-//    const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
+
     for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
-//        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
         writeNext(&(result_arr[i]), output_c, VECTOR_WIDTH*mBlock_idx + i, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
     }
 }
@@ -862,21 +792,16 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
     const int num_vec4_in_N = UP_DIV(N, 4);
 
     int offset_iter_K = 0;
-    int offset_iter_N = 0;
 
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
         short offset_movement = 0;
-        const int inpa_offset = (VECTOR_WIDTH*kBlock_idx) * mBlocks + mBlock_idx;
-        const int inpb_offset = (VECTOR_WIDTH*nBlock_idx) * kBlocks + kBlock_idx;
         FLOATX a_arr[VECTOR_WIDTH];
         FLOATX b_arr[VECTOR_WIDTH];
 
 #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-//            a_arr[i] = vloadX(inpa_offset + mBlocks*i, input_a);
             int dummy = 0;
             a_arr[i] = loadNext(input_a, kBlock_idx*VECTOR_WIDTH + i, mBlock_idx * VECTOR_WIDTH/4, ROUND_UP(M, 4), num_vec4_in_M, &dummy);
-//            b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
             b_arr[i] = loadNext(input_b, nBlock_idx * VECTOR_WIDTH + i, offset_iter_K, ROUND_UP(K, 4), num_vec4_in_K, &offset_movement);
         }
 
@@ -897,9 +822,7 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
         offset_iter_K += offset_movement;
     }
 
-    const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
     for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
-//        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
         writeNext(&(result_arr[i]), output_c, VECTOR_WIDTH*mBlock_idx + i, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
     }
 }
