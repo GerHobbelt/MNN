@@ -29,10 +29,6 @@ inline FLOATX loadNext(const __global FLOAT* p, const short row, const short col
     // WIDTH IS THE MEMORY WIDTH IE ROUND_UP(K, 4) OR ROUND_UP(N, 4)
     // NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4 IE UP_DIV(K, 4) OR UP_DIV(N, 4)
 
-    if (MUST_PRINT()){
-        printf("row: %i\tcol: %i\twidth:%i\tnum_cols: %i\n", row, col, width, num_cols);
-    }
-
 #if VECTOR_WIDTH == 4
     *num_vec4_moved = 1;
     return vload4(row * num_cols + col, p);
@@ -76,15 +72,12 @@ inline FLOATX loadNext(const __global FLOAT* p, const short row, const short col
     // Can possibly become compile-time directive
     if (width%8==0){
         *num_vec4_moved = 2;
-//        return (FLOAT16)(vload8((row * num_cols + col)/2, p), (FLOAT8)(0));
         return (FLOAT16)(vload4(row * num_cols + col, p), vload4(row * num_cols + col + 1, p), (FLOAT8)(0));
     }
 
     // num_cols/4 is integer division -> floor(num_cols/4.0)
     // can possibly be compile time directive
     short remain = width - (num_cols/4)*16;
-    if (MUST_PRINT())
-        printf("Remain: %i\n", remain);
 
     if (remain == 4){
         *num_vec4_moved = 1;
@@ -93,46 +86,6 @@ inline FLOATX loadNext(const __global FLOAT* p, const short row, const short col
     if (remain == 12) {
         *num_vec4_moved = 3;
         return (FLOAT16)(vload4(row * num_cols + col, p), vload4(row * num_cols + col + 1, p), vload4(row * num_cols + col + 2, p), (FLOAT4)(0));
-    }
-#endif
-}
-
-
-inline FLOATX load(const short row, short col, const __global FLOAT* p, const short num_blocks, const short num_elements) {
-#if VECTOR_WIDTH == 4
-    return vload4(row*num_blocks + col, p);
-#elif VECTOR_WIDTH == 8
-//    if(MUST_PRINT()){
-//        printf("row: %i\tcol: %i\t ROUND_UP: %i\n", row, col, ROUND_UP(num_elements, 4));
-//    }
-    if (col < num_blocks - 1){
-        if (MUST_PRINT()){
-            printf("Regular Load\n");
-        }
-        return vload8(row * ROUND_UP(num_elements, 4) + col, p);
-    } else {
-        if (MUST_PRINT()){
-            printf("Special Load\n");
-        }
-        if (num_elements - (col * VECTOR_WIDTH) <= 4){
-            return (FLOAT8)(vload4(((row) * ROUND_UP(num_elements, 4)) + col*2, p), (FLOAT4)(0));
-        } else {
-            return vload8(row*num_blocks + col, p);
-        }
-    }
-#elif VECTOR_WIDTH == 16
-    if (col != num_blocks - 1){
-        return vload16(row*num_blocks + col, p);
-    } else {
-        if (num_elements - (col * VECTOR_WIDTH) <= 4){
-            return (FLOAT16)(vload4(row*num_blocks + col*4, p), (FLOAT4)(0), (FLOAT8)(0));
-        } else if (num_elements - (col * VECTOR_WIDTH) <= 8) {
-            return (FLOAT16)(vload8(row*num_blocks + col*2, p), (FLOAT8)(0));
-        } else if (num_elements - (col * VECTOR_WIDTH) <= 12) {
-            return (FLOAT16)(vload8(row*num_blocks + col*2, p), vload4(row*num_blocks + (col+2)*4, p), (FLOAT4)(0));
-        } else {
-            return vload16(row*num_blocks + col, p);
-        }
     }
 #endif
 }
@@ -206,24 +159,6 @@ inline void writeNext(FLOATX *r, __global FLOAT* p, const short row, const short
         vstore4(r->s89ab, row * num_cols + col + 2, p);
     }
 
-#endif
-}
-
-inline void write(FLOATX *r, const short row, const short col, __global FLOAT* p, const short num_blocks, const short num_elements){
-#if VECTOR_WIDTH==4
-    vstore4(*r, row*num_blocks+col, p);
-#elif VECTOR_WIDTH==8
-    if (col < num_blocks - 1){
-        vstore8(*r, row*num_blocks + col, p);
-    } else {
-        if (num_elements - (col * VECTOR_WIDTH) <= 4){
-            vstore4((FLOAT4)(r->s0123), row*num_blocks + col*2, p);
-        } else {
-            vstore8(*r, row*num_blocks + col, p);
-        }
-    }
-#elif VECTOR_WIDTH==16
-//    vstore16(r, row*num_blocks+col, p);
 #endif
 }
 
@@ -374,14 +309,18 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         b_arr[i] = 0;
     }
 
+
+const int num_vec4_in_K = UP_DIV(K, 4);
+const int num_vec4_in_N = UP_DIV(N, 4);
+
+int dummy = 0;
+
 #ifdef BIAS
-    FLOATX results = vloadX(nBlocks_idx, input_c);
+#error BIAS NOT IMPLEMENTED
 #else
     FLOATX results = (FLOATX)(0);
 #endif
 
-    const int num_vec4_in_K = UP_DIV(K, 4);
-    const int num_vec4_in_N = UP_DIV(N, 4);
 
     int offset_iter_K = 0;
 
@@ -391,7 +330,6 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
 
         #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-            int dummy = 0;
             b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &dummy);
         }
 
@@ -503,7 +441,7 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     }
 
 #ifdef BIAS
-    FLOATX results = vloadX(nBlock_idx, input_c);
+#error BIAS NOT IMPLEMENTED
 #else
     FLOATX results = (FLOATX)(0);
 #endif
@@ -616,6 +554,7 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
     FLOATX v_zero = (FLOATX)((FLOAT)0.0);
     FLOATX result_arr[VECTOR_WIDTH];
     #ifdef BIAS
+#error BIAS NOT IMPLEMENTED
     result_arr[0] = vloadX(nBlock_idx, input_c);
     for (short i = 1; i < VECTOR_WIDTH; i++){
         result_arr[i] = result_arr[0];
@@ -775,6 +714,7 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
     FLOATX v_zero = (FLOATX)((FLOAT)0.0);
     FLOATX result_arr[VECTOR_WIDTH];
     #ifdef BIAS
+#error BIAS NOT IMPLEMENTED
     result_arr[0] = vloadX(nBlock_idx, input_c);
     #pragma unroll
     for (short i = 1; i < VECTOR_WIDTH; i++){

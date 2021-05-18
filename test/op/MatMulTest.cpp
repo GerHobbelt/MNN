@@ -62,10 +62,6 @@ public:
 protected:
     static bool test(MNNForwardType type, const std::string& device_name, const std::string& test_op_name, int height_a,
                      int width_a, int height_b, int width_b, bool tranpose_a, bool tranpose_b) {
-        printf("height_a %i; ", height_a);
-        printf("width_a %i\n", width_a);
-        printf("height_b %i; ", height_b);
-        printf("width_b %i\n", width_b);
         auto input_a = _Input({height_a, width_a}, NCHW);
         auto input_b = _Input({height_b, width_b}, NCHW);
         auto output  = _MatMul(input_a, input_b, tranpose_a, tranpose_b);
@@ -82,7 +78,7 @@ protected:
             auto c = i;
             data_b.push_back((float)c);
         }
-        reference_matmul(data_a, data_b, data_c, width_a, width_b, tranpose_a, tranpose_b);
+            reference_matmul(data_a, data_b, data_c, width_a, width_b, tranpose_a, tranpose_b);
         ::memcpy(input_a->writeMap<float>(), data_a.data(), data_a.size() * sizeof(float));
         ::memcpy(input_b->writeMap<float>(), data_b.data(), data_b.size() * sizeof(float));
         auto outputPtr = output->readMap<float>();
@@ -122,16 +118,16 @@ protected:
                             if (tranpose_b == 1) {
                                 std::swap(height_b, width_b);
                             }
-                            bool succ = MatMulCommonTest::test(type, device_name, "MatMul", height_a, width_a, height_b,
+                                bool succ = MatMulCommonTest::test(type, device_name, "MatMul", height_a, width_a, height_b,
                                                                width_b, tranpose_a != 0, tranpose_b != 0);
-                            if (!succ) {
-                                return false;
+                                if (!succ) {
+                                    return false;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
         return true;
     }
 };
