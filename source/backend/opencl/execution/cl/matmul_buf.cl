@@ -399,13 +399,14 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
             printf("offset_movement=%i\n", offset_movement);
             printFloatX(&a);
         }
-        offset_iter_K += offset_movement;
+
 
         const int inpb_offset = (kBlock_idx * VECTOR_WIDTH * nBlocks) + nBlock_idx;
 
         #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-            b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &offset_movement);
+            int dummy = 0;
+            b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &dummy);
 //            if (MUST_PRINT()){
 //                printf("b%i: \n", i);
 //                printFloatX(&(b_arr[i]));
@@ -426,6 +427,8 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         transpose(b_arr, btmp_arr);
 
         dot1D(&a, btmp_arr, &results);
+
+        offset_iter_K += offset_movement;
     }
 
     const int out_offset = (mBlock_idx * nBlocks) + nBlock_idx;
@@ -659,9 +662,14 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
         __private const int kBlocks,
         __private const int M,
         __private const int mBlocks,
+        __private const int N,
         __private const int nBlocks) {
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
+
+    if(MUST_PRINT()){
+        printf("nBlock_idx: %i, mBlock_idx: %i, K: %i, kBlocks: %i, nBlocks: %i\n", nBlock_idx, mBlock_idx, K, kBlocks, nBlocks);
+    }
 
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
 
@@ -679,6 +687,13 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
     }
     #endif
 
+    const int num_vec4_in_M = UP_DIV(M, 4);
+    const int num_vec4_in_K = UP_DIV(K, 4);
+    const int num_vec4_in_N = UP_DIV(N, 4);
+
+    int offset_iter_K = 0;
+    int offset_iter_N = 0;
+
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
         const int inpa_offset = (VECTOR_WIDTH*kBlock_idx) * mBlocks + mBlock_idx;
         const int inpb_offset = (VECTOR_WIDTH*kBlock_idx) * nBlocks + nBlock_idx;
@@ -687,8 +702,11 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
         FLOATX b_arr[VECTOR_WIDTH];
 #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-            a_arr[i] = vloadX(inpa_offset + (mBlocks*i), input_a);
-            b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
+//            a_arr[i] = vloadX(inpa_offset + (mBlocks*i), input_a);
+//            b_arr[i] = vloadX(inpb_offset + (nBlocks*i), input_b);
+            int dummy = 0;
+            a_arr[i] = loadNext(input_a, kBlock_idx*VECTOR_WIDTH + i, mBlock_idx * VECTOR_WIDTH/4, ROUND_UP(M, 4), num_vec4_in_M, &dummy);
+            b_arr[i] = loadNext(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx * VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N, &dummy);
         }
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
@@ -708,9 +726,10 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
             dot1D(&(aTrans_arr[i]), bTrans_arr, &(result_arr[i]));
         }
     }
-    const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
+//    const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
     for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
-        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
+//        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
+        writeNext(&(result_arr[i]), output_c, VECTOR_WIDTH*mBlock_idx + i, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
     }
 }
 #else
@@ -816,6 +835,7 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
             __private const int kBlocks,
             __private const int M,
             __private const int mBlocks,
+            __private const int N,
             __private const int nBlocks) {
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
@@ -837,8 +857,15 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
     }
     #endif
 
-    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
+    const int num_vec4_in_M = UP_DIV(M, 4);
+    const int num_vec4_in_K = UP_DIV(K, 4);
+    const int num_vec4_in_N = UP_DIV(N, 4);
 
+    int offset_iter_K = 0;
+    int offset_iter_N = 0;
+
+    for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
+        short offset_movement = 0;
         const int inpa_offset = (VECTOR_WIDTH*kBlock_idx) * mBlocks + mBlock_idx;
         const int inpb_offset = (VECTOR_WIDTH*nBlock_idx) * kBlocks + kBlock_idx;
         FLOATX a_arr[VECTOR_WIDTH];
@@ -846,8 +873,11 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
 
 #pragma unroll VECTOR_WIDTH
         for (short i = 0; i < VECTOR_WIDTH; i++){
-            a_arr[i] = vloadX(inpa_offset + mBlocks*i, input_a);
-            b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
+//            a_arr[i] = vloadX(inpa_offset + mBlocks*i, input_a);
+            int dummy = 0;
+            a_arr[i] = loadNext(input_a, kBlock_idx*VECTOR_WIDTH + i, mBlock_idx * VECTOR_WIDTH/4, ROUND_UP(M, 4), num_vec4_in_M, &dummy);
+//            b_arr[i] = vloadX(inpb_offset + kBlocks*i, input_b);
+            b_arr[i] = loadNext(input_b, nBlock_idx * VECTOR_WIDTH + i, offset_iter_K, ROUND_UP(K, 4), num_vec4_in_K, &offset_movement);
         }
 
         short remain = (kBlock_idx + 1) * VECTOR_WIDTH - K;
@@ -863,11 +893,14 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
         for (short i = 0; i < VECTOR_WIDTH; i++){
             dot1D(&(aTrans_arr[i]), b_arr, &(result_arr[i]));
         }
+
+        offset_iter_K += offset_movement;
     }
 
     const int out_offset = (VECTOR_WIDTH*mBlock_idx) * nBlocks + nBlock_idx;
     for (short i = 0; i < VECTOR_WIDTH && !(VECTOR_WIDTH*mBlock_idx+i >= M); i++){
-        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
+//        vstoreX(result_arr[i], out_offset + nBlocks*i, output_c);
+        writeNext(&(result_arr[i]), output_c, VECTOR_WIDTH*mBlock_idx + i, nBlock_idx *  VECTOR_WIDTH/4, ROUND_UP(N, 4), num_vec4_in_N);
     }
 }
 #else
