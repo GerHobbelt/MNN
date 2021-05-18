@@ -122,7 +122,7 @@ protected:
                             std::swap(height_a, width_a);
                         }
                         // for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b) {
-                        for (int tranpose_b = 0; tranpose_b <= 0; ++tranpose_b) {
+                        for (int tranpose_b = 1; tranpose_b <= 1; ++tranpose_b) {
                             int height_b = length, width_b = width_c;
                             if (tranpose_b == 1) {
                                 std::swap(height_b, width_b);
