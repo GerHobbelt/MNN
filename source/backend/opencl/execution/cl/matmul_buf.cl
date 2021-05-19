@@ -10,17 +10,16 @@ if (input1 >= global_size_dim0 || input2 >= global_size_dim1) { \
 return;                                                                                   \
 }
 
-#define MATMUL_V2
+//#define MATMUL_V2
 #ifdef MATMUL_V2
-
 
 #ifndef VECTOR_WIDTH
 #error VECTOR_WIDTH must be defined
 #endif
 
-#define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
-#define ROUND_UP(x, y) (((x) + (y) - (1)) / (y) * (y))
-#define MUST_PRINT() (get_global_id(0) == 0 && get_global_id(1) == 0)
+//#define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
+//#define ROUND_UP(x, y) (((x) + (y) - (1)) / (y) * (y))
+//#define MUST_PRINT() (get_global_id(0) == 0 && get_global_id(1) == 0)
 
 inline FLOATX load(const __global FLOAT* p, const short row, const short col, const short width, const short num_cols){
 // P is pointer to buffer memory
@@ -416,11 +415,11 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     const int height_idx       = get_global_id(1);// output H
 
     DEAL_NON_UNIFORM_DIM2(width_blocks_idx, height_idx);
-    FLOATX a;
-    FLOATX b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+    FLOAT4 a;
+    FLOAT4 b0 = 0, b1 = 0, b2 = 0, b3 = 0;
 
     #ifdef BIAS
-    FLOATX temp = vloadX(width_blocks_idx, input_c);
+    FLOAT4 temp = vload4(width_blocks_idx, input_c);
 
     FLOAT result0 = temp.x;
     FLOAT result1 = temp.y;
@@ -435,15 +434,15 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
 
     for (short pos = 0; pos < channel_blocks; pos += 1) {
         const int inpa_offset = height_idx * channel_blocks + pos;
-        a = vloadX(inpa_offset, input_a);
+        a = vload4(inpa_offset, input_a);
 
         short remain = (pos + 1) * 4 - channels;
         const int inpb_offset = (pos*4) * width_blocks + width_blocks_idx;
 
-        b0 = vloadX(inpb_offset, input_b);
-        b1 = vloadX(inpb_offset + width_blocks, input_b);
-        b2 = vloadX(inpb_offset + width_blocks*2, input_b);
-        b3 = vloadX(inpb_offset + width_blocks*3, input_b);
+        b0 = vload4(inpb_offset, input_b);
+        b1 = vload4(inpb_offset + width_blocks, input_b);
+        b2 = vload4(inpb_offset + width_blocks*2, input_b);
+        b3 = vload4(inpb_offset + width_blocks*3, input_b);
         if (remain == 3) {
             b1 = 0;
             b2 = 0;
@@ -455,10 +454,10 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
             b3 = 0;
         }
 
-        FLOATX btmp0 = (FLOATX)(b0.s0, b1.s0, b2.s0, b3.s0);
-        FLOATX btmp1 = (FLOATX)(b0.s1, b1.s1, b2.s1, b3.s1);
-        FLOATX btmp2 = (FLOATX)(b0.s2, b1.s2, b2.s2, b3.s2);
-        FLOATX btmp3 = (FLOATX)(b0.s3, b1.s3, b2.s3, b3.s3);
+        FLOAT4 btmp0 = (FLOAT4)(b0.s0, b1.s0, b2.s0, b3.s0);
+        FLOAT4 btmp1 = (FLOAT4)(b0.s1, b1.s1, b2.s1, b3.s1);
+        FLOAT4 btmp2 = (FLOAT4)(b0.s2, b1.s2, b2.s2, b3.s2);
+        FLOAT4 btmp3 = (FLOAT4)(b0.s3, b1.s3, b2.s3, b3.s3);
 
         result0 += dot(a, btmp0);
         result1 += dot(a, btmp1);
@@ -467,7 +466,7 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     }
 
     const int out_offset = height_idx * width_blocks + width_blocks_idx;
-    vstoreX((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
+    vstore4((FLOAT4)(result0, result1, result2, result3), out_offset, output_c);
 }
 #endif
 
@@ -537,11 +536,11 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     const int height_idx       = get_global_id(1);
 
     DEAL_NON_UNIFORM_DIM2(width_blocks_idx, height_idx);
-    FLOATX a;
-    FLOATX b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+    FLOAT4 a;
+    FLOAT4 b0 = 0, b1 = 0, b2 = 0, b3 = 0;
 
     #ifdef BIAS
-    FLOATX temp = vloadX(width_blocks_idx, input_c);
+    FLOAT4 temp = vload4(width_blocks_idx, input_c);
     FLOAT result0 = temp.x;
     FLOAT result1 = temp.y;
     FLOAT result2 = temp.z;
@@ -555,15 +554,15 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
 
     for (short pos = 0; pos < channel_blocks; pos += 1) {
         const int inpa_offset = height_idx * channel_blocks + pos;
-        a = vloadX(inpa_offset, input_a);
+        a = vload4(inpa_offset, input_a);
 
         short remain = (pos + 1) * 4 - channels;
         const int inpb_offset = (width_blocks_idx*4) * channel_blocks + pos;
 
-        b0 = vloadX(inpb_offset, input_b);
-        b1 = vloadX(inpb_offset + channel_blocks, input_b);
-        b2 = vloadX(inpb_offset + channel_blocks*2, input_b);
-        b3 = vloadX(inpb_offset + channel_blocks*3, input_b);
+        b0 = vload4(inpb_offset, input_b);
+        b1 = vload4(inpb_offset + channel_blocks, input_b);
+        b2 = vload4(inpb_offset + channel_blocks*2, input_b);
+        b3 = vload4(inpb_offset + channel_blocks*3, input_b);
 
         if (remain == 3) {
             a.y = 0;
@@ -582,7 +581,7 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
         result3 += dot(a, b3);
     }
     const int out_offset = height_idx * width_blocks + width_blocks_idx;
-    vstoreX((FLOATX)(result0, result1, result2, result3), out_offset, output_c);
+    vstore4((FLOAT4)(result0, result1, result2, result3), out_offset, output_c);
 }
 #endif
 #ifdef MATMUL_V2
@@ -671,47 +670,47 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
 
     DEAL_NON_UNIFORM_DIM2(width_blocks_idx, height_blocks_idx);
 
-    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
+    FLOAT4 v_zero = (FLOAT4)((FLOAT)0.0);
     #ifdef BIAS
-    FLOATX result0 = vloadX(width_blocks_idx, input_c);
-    FLOATX result1 = result0;
-    FLOATX result2 = result0;
-    FLOATX result3 = result0;
+    FLOAT4 result0 = vload4(width_blocks_idx, input_c);
+    FLOAT4 result1 = result0;
+    FLOAT4 result2 = result0;
+    FLOAT4 result3 = result0;
     #else
-    FLOATX result0 = 0;
-    FLOATX result1 = 0;
-    FLOATX result2 = 0;
-    FLOATX result3 = 0;
+    FLOAT4 result0 = 0;
+    FLOAT4 result1 = 0;
+    FLOAT4 result2 = 0;
+    FLOAT4 result3 = 0;
     #endif
     
     for (short pos = 0; pos < channel_blocks; pos += 1) {
 
         const int inpa_offset = (4*pos) * height_blocks + height_blocks_idx;
-        FLOATX a0 = vloadX(inpa_offset, input_a);
-        FLOATX a1 = vloadX(inpa_offset + height_blocks, input_a);
-        FLOATX a2 = vloadX(inpa_offset + height_blocks*2, input_a);
-        FLOATX a3 = vloadX(inpa_offset + height_blocks*3, input_a);
+        FLOAT4 a0 = vload4(inpa_offset, input_a);
+        FLOAT4 a1 = vload4(inpa_offset + height_blocks, input_a);
+        FLOAT4 a2 = vload4(inpa_offset + height_blocks*2, input_a);
+        FLOAT4 a3 = vload4(inpa_offset + height_blocks*3, input_a);
 
         const int inpb_offset = (4*pos) * width_blocks + width_blocks_idx;
-        FLOATX b0 = vloadX(inpb_offset, input_b);
-        FLOATX b1 = vloadX(inpb_offset + width_blocks, input_b);
-        FLOATX b2 = vloadX(inpb_offset + width_blocks*2, input_b);
-        FLOATX b3 = vloadX(inpb_offset + width_blocks*3, input_b);
+        FLOAT4 b0 = vload4(inpb_offset, input_b);
+        FLOAT4 b1 = vload4(inpb_offset + width_blocks, input_b);
+        FLOAT4 b2 = vload4(inpb_offset + width_blocks*2, input_b);
+        FLOAT4 b3 = vload4(inpb_offset + width_blocks*3, input_b);
 
         short remain = (pos + 1) * 4 - channels;
         a3 = ((remain >= 1) ? v_zero : a3);
         a2 = ((remain >= 2) ? v_zero : a2);
         a1 = ((remain >= 3) ? v_zero : a1);
 
-        FLOATX a0_trans = (FLOATX)(a0.x, a1.x, a2.x, a3.x);
-        FLOATX a1_trans = (FLOATX)(a0.y, a1.y, a2.y, a3.y);
-        FLOATX a2_trans = (FLOATX)(a0.z, a1.z, a2.z, a3.z);
-        FLOATX a3_trans = (FLOATX)(a0.w, a1.w, a2.w, a3.w);
+        FLOAT4 a0_trans = (FLOAT4)(a0.x, a1.x, a2.x, a3.x);
+        FLOAT4 a1_trans = (FLOAT4)(a0.y, a1.y, a2.y, a3.y);
+        FLOAT4 a2_trans = (FLOAT4)(a0.z, a1.z, a2.z, a3.z);
+        FLOAT4 a3_trans = (FLOAT4)(a0.w, a1.w, a2.w, a3.w);
 
-        FLOATX b0_trans = (FLOATX)(b0.x, b1.x, b2.x, b3.x);
-        FLOATX b1_trans = (FLOATX)(b0.y, b1.y, b2.y, b3.y);
-        FLOATX b2_trans = (FLOATX)(b0.z, b1.z, b2.z, b3.z);
-        FLOATX b3_trans = (FLOATX)(b0.w, b1.w, b2.w, b3.w);
+        FLOAT4 b0_trans = (FLOAT4)(b0.x, b1.x, b2.x, b3.x);
+        FLOAT4 b1_trans = (FLOAT4)(b0.y, b1.y, b2.y, b3.y);
+        FLOAT4 b2_trans = (FLOAT4)(b0.z, b1.z, b2.z, b3.z);
+        FLOAT4 b3_trans = (FLOAT4)(b0.w, b1.w, b2.w, b3.w);
 
         //matmul
         result0.x += dot(a0_trans, b0_trans);
@@ -736,13 +735,13 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     }
     const int out_offset = (4*height_blocks_idx) * width_blocks + width_blocks_idx;
 
-    vstoreX(result0, out_offset, output_c);
+    vstore4(result0, out_offset, output_c);
     if(4*height_blocks_idx+1 >= height) return;
-    vstoreX(result1, out_offset + width_blocks, output_c);
+    vstore4(result1, out_offset + width_blocks, output_c);
     if(4*height_blocks_idx+2 >= height) return;
-    vstoreX(result2, out_offset + width_blocks*2, output_c);
+    vstore4(result2, out_offset + width_blocks*2, output_c);
     if(4*height_blocks_idx+3 >= height) return;
-    vstoreX(result3, out_offset + width_blocks*3, output_c);
+    vstore4(result3, out_offset + width_blocks*3, output_c);
 }
 #endif
 
@@ -837,41 +836,41 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
 
     DEAL_NON_UNIFORM_DIM2(width_blocks_idx, height_blocks_idx);
 
-    FLOATX v_zero = (FLOATX)((FLOAT)0.0);
+    FLOAT4 v_zero = (FLOAT4)((FLOAT)0.0);
     #ifdef BIAS
-    FLOATX result0 = vloadX(width_blocks_idx, input_c);
-    FLOATX result1 = result0;
-    FLOATX result2 = result0;
-    FLOATX result3 = result0;
+    FLOAT4 result0 = vload4(width_blocks_idx, input_c);
+    FLOAT4 result1 = result0;
+    FLOAT4 result2 = result0;
+    FLOAT4 result3 = result0;
     #else
-    FLOATX result0 = 0;
-    FLOATX result1 = 0;
-    FLOATX result2 = 0;
-    FLOATX result3 = 0;
+    FLOAT4 result0 = 0;
+    FLOAT4 result1 = 0;
+    FLOAT4 result2 = 0;
+    FLOAT4 result3 = 0;
     #endif
 
     for (short pos = 0; pos < channel_blocks; pos += 1) {
         const int inpa_offset = (4*pos) * height_blocks + height_blocks_idx;
-        FLOATX a0 = vloadX(inpa_offset, input_a);
-        FLOATX a1 = vloadX(inpa_offset + height_blocks, input_a);
-        FLOATX a2 = vloadX(inpa_offset + height_blocks*2, input_a);
-        FLOATX a3 = vloadX(inpa_offset + height_blocks*3, input_a);
+        FLOAT4 a0 = vload4(inpa_offset, input_a);
+        FLOAT4 a1 = vload4(inpa_offset + height_blocks, input_a);
+        FLOAT4 a2 = vload4(inpa_offset + height_blocks*2, input_a);
+        FLOAT4 a3 = vload4(inpa_offset + height_blocks*3, input_a);
 
         const int inpb_offset = (4*width_blocks_idx) * channel_blocks + pos;
-        FLOATX b0 = vloadX(inpb_offset, input_b);
-        FLOATX b1 = vloadX(inpb_offset + channel_blocks, input_b);
-        FLOATX b2 = vloadX(inpb_offset + channel_blocks*2, input_b);
-        FLOATX b3 = vloadX(inpb_offset + channel_blocks*3, input_b);
+        FLOAT4 b0 = vload4(inpb_offset, input_b);
+        FLOAT4 b1 = vload4(inpb_offset + channel_blocks, input_b);
+        FLOAT4 b2 = vload4(inpb_offset + channel_blocks*2, input_b);
+        FLOAT4 b3 = vload4(inpb_offset + channel_blocks*3, input_b);
 
         short remain = (pos + 1) * 4 - channels;
         a3 = ((remain >= 1) ? v_zero : a3);
         a2 = ((remain >= 2) ? v_zero : a2);
         a1 = ((remain >= 3) ? v_zero : a1);
 
-        FLOATX a0_trans = (FLOATX)(a0.x, a1.x, a2.x, a3.x);
-        FLOATX a1_trans = (FLOATX)(a0.y, a1.y, a2.y, a3.y);
-        FLOATX a2_trans = (FLOATX)(a0.z, a1.z, a2.z, a3.z);
-        FLOATX a3_trans = (FLOATX)(a0.w, a1.w, a2.w, a3.w);
+        FLOAT4 a0_trans = (FLOAT4)(a0.x, a1.x, a2.x, a3.x);
+        FLOAT4 a1_trans = (FLOAT4)(a0.y, a1.y, a2.y, a3.y);
+        FLOAT4 a2_trans = (FLOAT4)(a0.z, a1.z, a2.z, a3.z);
+        FLOAT4 a3_trans = (FLOAT4)(a0.w, a1.w, a2.w, a3.w);
 
         //matmul
         result0.x += dot(a0_trans, b0);
@@ -897,12 +896,12 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
 
     const int out_offset = (4*height_blocks_idx) * width_blocks + width_blocks_idx;
 
-    vstoreX(result0, out_offset, output_c);
+    vstore4(result0, out_offset, output_c);
     if(4*height_blocks_idx+1 >= height) return;
-    vstoreX(result1, out_offset + width_blocks, output_c);
+    vstore4(result1, out_offset + width_blocks, output_c);
     if(4*height_blocks_idx+2 >= height) return;
-    vstoreX(result2, out_offset + width_blocks*2, output_c);
+    vstore4(result2, out_offset + width_blocks*2, output_c);
     if(4*height_blocks_idx+3 >= height) return;
-    vstoreX(result3, out_offset + width_blocks*3, output_c);
+    vstore4(result3, out_offset + width_blocks*3, output_c);
 }
 #endif

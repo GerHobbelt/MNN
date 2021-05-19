@@ -19,7 +19,7 @@ MatMulBufExecution::MatMulBufExecution(const std::vector<Tensor *> &inputs, cons
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
 }
 ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
-#define MATMUL_V2
+//#define MATMUL_V2
 #ifdef MATMUL_V2
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
@@ -69,9 +69,9 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         } else {
             buildOptions.emplace("-DFLOATX=float" + std::to_string(VECTOR_WIDTH));
         }
+        buildOptions.emplace("-DMATMUL_V2");
         buildOptions.emplace("-DVECTOR_WIDTH=" + std::to_string(VECTOR_WIDTH));
-        buildOptions.emplace("-DvloadX=vload" + std::to_string(VECTOR_WIDTH));
-        buildOptions.emplace("-DvstoreX=vstore" + std::to_string(VECTOR_WIDTH));
+//        buildOptions.emplace("-DvloadX=vload" + std::to_string(VECTOR_WIDTH));
 
         mKernel           = runtime->buildKernel("matmul_buf", mKernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
@@ -139,15 +139,17 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
 
     if (mKernel.get() == nullptr) {
         std::set<std::string> buildOptions;
-        if(mTransposeA) {
-            mKernelName = mTransposeB ? "matmul_transA_transB_buf":"matmul_transA_buf";
+        if (mTransposeA) {
+            mKernelName = mTransposeB ? "matmul_transA_transB_buf" : "matmul_transA_buf";
         } else {
-            mKernelName = mTransposeB ? "matmul_transB_buf":"matmul_buf";
+            mKernelName = mTransposeB ? "matmul_transB_buf" : "matmul_buf";
         }
 
-        if(inputs.size() > 2) {
+        if (inputs.size() > 2) {
             buildOptions.emplace("-DBIAS");
         }
+        mKernel           = runtime->buildKernel("matmul_buf", mKernelName, buildOptions);
+    }
 
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
@@ -157,9 +159,9 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         const int height        = input0Shape.at(3);//input0 H
         const int outputChannel = input0Shape.at(0);//input0 W
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);//input1 WW
-        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
-        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
-        const int heightblocks        = UP_DIV(height, VECTOR_WIDTH);
+        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
+        const int widthblocks         = UP_DIV(width, 4);
+        const int heightblocks        = UP_DIV(height, 4);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(heightblocks)};
         int idx            = 0;
@@ -183,8 +185,8 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         const int height        = input0Shape.at(0);//input0 H
         const int outputChannel = input0Shape.at(3);//input0 W
         const int width         = mTransposeB ? input1Shape.at(0): input1Shape.at(3);//input1 W
-        const int outputChannelBlocks = UP_DIV(outputChannel, VECTOR_WIDTH);
-        const int widthblocks         = UP_DIV(width, VECTOR_WIDTH);
+        const int outputChannelBlocks = UP_DIV(outputChannel, 4);
+        const int widthblocks         = UP_DIV(width, 4);
         
         mGlobalWorkSize = {static_cast<uint32_t>(widthblocks), static_cast<uint32_t>(height)};
         int idx            = 0;
@@ -214,8 +216,6 @@ ErrorCode MatMulBufExecution::onExecute(const std::vector<Tensor *> &inputs, con
 #endif
 
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
-
-    printf("Actually running\n");
 
     #ifdef ENABLE_OPENCL_TIME_PROFILER
         cl::Event event;

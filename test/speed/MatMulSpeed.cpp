@@ -89,7 +89,7 @@ public:
                 //                return false;
             }
             const auto time = 100;
-            MNN_PRINT("MatMut: [%d, %d, %d], run %d\n", e, l, h, time);
+            MNN_PRINT("MatMul: [%d, %d, %d], run %d\n", e, l, h, time);
             AUTOTIME;
             for (int t = 0; t < time; ++t) {
                 x0->writeMap<float>();
