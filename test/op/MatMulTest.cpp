@@ -87,6 +87,9 @@ protected:
             }
             return false;
         }
+        MNN_PRINT("%s: %d x %d - %d x %d -> %d, %d , transpose: %d, %d, test passed!\n", test_op_name.c_str(),
+                      width_a, height_a, width_b, height_b, output->getInfo()->dim[1], output->getInfo()->dim[0],
+                      tranpose_a, tranpose_b);
         return true;
     }
 };

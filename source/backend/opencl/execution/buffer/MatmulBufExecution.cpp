@@ -19,7 +19,7 @@ MatMulBufExecution::MatMulBufExecution(const std::vector<Tensor *> &inputs, cons
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
 }
 ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
-//#define MATMUL_V2
+#define MATMUL_V2
 #ifdef MATMUL_V2
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
@@ -43,7 +43,7 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int N = mTransposeB ? input1Shape.at(0) : input1Shape.at(3); // width
     const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
 
-    int VECTOR_WIDTH = 8;
+    int VECTOR_WIDTH = 4;
 //    if (M > 12 && N > 12 && K > 12){
 //        VECTOR_WIDTH = 16;
 //    } else if (M > 4 && N > 4 && K > 4){
@@ -63,6 +63,8 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         if(inputs.size() > 2) {
             buildOptions.emplace("-DBIAS");
         }
+
+//        buildOptions.emplace("-O3");
 
         if (runtime->isSupportedFP16()){
             buildOptions.emplace("-DFLOATX=half" + std::to_string(VECTOR_WIDTH));

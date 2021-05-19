@@ -54,10 +54,10 @@ public:
         {
             // Test MatMul
             std::unique_ptr<MNN::OpT> op(new MNN::OpT);
-            op->type                = MNN::OpType_MatMul;
-            op->main.type           = MNN::OpParameter_MatMul;
-            op->main.value          = new MNN::MatMulT;
-            auto matmulParam        = op->main.AsMatMul();
+            op->type = MNN::OpType_MatMul;
+            op->main.type = MNN::OpParameter_MatMul;
+            op->main.value = new MNN::MatMulT;
+            auto matmulParam = op->main.AsMatMul();
             matmulParam->transposeA = false;
             matmulParam->transposeB = false;
 
@@ -73,14 +73,14 @@ public:
             _originMatMul(dstY->writeMap<float>(), x0->readMap<float>(), x1->readMap<float>(), e, l, h);
 
             auto absMaxV = _ReduceMax(_Abs(dstY));
-            auto diffV   = _ReduceMax(_Abs(dstY - y));
+            auto diffV = _ReduceMax(_Abs(dstY - y));
             Variable::prepareCompute({absMaxV, diffV}, true);
 
             auto absMax = absMaxV->readMap<float>()[0];
             MNN_ASSERT(absMax != 0.0f);
             auto diff = diffV->readMap<float>()[0];
 
-            bool res  = false;
+            bool res = false;
             if (diff < 0.01f * absMax) {
                 res = true;
             }
@@ -155,5 +155,73 @@ public:
         return true;
     }
 };
+
+class MatMulSpeedLoopedTest: public MNNTestCase {
+public:
+    virtual bool run() {
+        int start = 1, end = 10;
+        for (short i = start; i < end; ++i){
+            auto res = _run(i, i, i);
+            if (!res) {
+                return false;
+            }
+        }
+        printf("\n");
+        return true;
+    }
+
+    bool _run(int e, int h, int l) {
+        // Test MatMul
+        std::unique_ptr<MNN::OpT> op(new MNN::OpT);
+        op->type                = MNN::OpType_MatMul;
+        op->main.type           = MNN::OpParameter_MatMul;
+        op->main.value          = new MNN::MatMulT;
+        auto matmulParam        = op->main.AsMatMul();
+        matmulParam->transposeA = false;
+        matmulParam->transposeB = false;
+
+        auto x0 = _Input({}, NHWC, halide_type_of<float>());
+        auto x1 = _Input({}, NHWC, halide_type_of<float>());
+        x0->resize({e, l});
+        x1->resize({l, h});
+        auto y = Variable::create(Expr::create(op.get(), {x0, x1}));
+        Variable::prepareCompute({y});
+        auto dstY = _Input({e, h}, NHWC, halide_type_of<float>());
+        fillFloat(x0->writeMap<float>(), e, l);
+        fillFloat(x1->writeMap<float>(), l, h);
+        _originMatMul(dstY->writeMap<float>(), x0->readMap<float>(), x1->readMap<float>(), e, l, h);
+
+        auto absMaxV = _ReduceMax(_Abs(dstY));
+        auto diffV   = _ReduceMax(_Abs(dstY - y));
+        Variable::prepareCompute({absMaxV, diffV}, true);
+
+        auto absMax = absMaxV->readMap<float>()[0];
+        MNN_ASSERT(absMax != 0.0f);
+        auto diff = diffV->readMap<float>()[0];
+
+        bool res  = false;
+        if (diff < 0.01f * absMax) {
+            res = true;
+        }
+        if (!res) {
+            MNN_PRINT("%f error larger than %f * 0.001f\n", diff, absMax);
+            //                return false;
+        }
+        const auto num_loops = 100;
+        MNN_PRINT("MatMul: [%d, %d, %d], run %d\n", e, l, h, num_loops);
+        MNN::Timer loopTimer;
+        for (int t = 0; t < num_loops; ++t) {
+            x0->writeMap<float>();
+            x1->writeMap<float>();
+            y->readMap<float>();
+        }
+        printf("%f,", ((float)loopTimer.durationInUs() / 1000.0f) / (float)num_loops);
+        return true;
+    }
+};
+
 MNNTestSuiteRegister(MatMulSpeedTest, "speed/MatMulTest");
 MNNTestSuiteRegister(MatMulSpeedConstTest, "speed/MatMulBConstTest");
+MNNTestSuiteRegister(MatMulSpeedLoopedTest, "speed/MatMulSpeedLoopedTest");
+
+
