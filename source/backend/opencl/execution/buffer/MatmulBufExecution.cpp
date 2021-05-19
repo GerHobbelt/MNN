@@ -43,15 +43,14 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int N = mTransposeB ? input1Shape.at(0) : input1Shape.at(3); // width
     const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
 
-    int VECTOR_WIDTH;
-    if (M > 12 && N > 12 && K > 12){
-        VECTOR_WIDTH = 16;
-    } else if (M > 4 && N > 4 && K > 4){
-        VECTOR_WIDTH = 8;
-    } else {
-        VECTOR_WIDTH = 4;
-    }
-    MNN_ERROR("VECTOR_WIDTH=%i\tM:%i, N:%i, K:%i\n", VECTOR_WIDTH, M, N, K);
+    int VECTOR_WIDTH = 8;
+//    if (M > 12 && N > 12 && K > 12){
+//        VECTOR_WIDTH = 16;
+//    } else if (M > 4 && N > 4 && K > 4){
+//        VECTOR_WIDTH = 8;
+//    } else {
+//        VECTOR_WIDTH = 4;
+//    }
     
     if (mKernel.get() == nullptr) {
         std::set<std::string> buildOptions;
@@ -83,7 +82,14 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
     const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
 
-    printf("%s, VECTOR_WIDTH: %i, M: %i, N: %i, K: %i, mBlocks: %i, nBlocks: %i, kBlocks: %i\n", mKernelName.c_str(), VECTOR_WIDTH, M, N, K, mBlocks, nBlocks, kBlocks);
+    const int num_vec4_in_M = UP_DIV(M, 4);
+    const int num_elems_in_M = ROUND_UP(M, 4);
+    const int num_vec4_in_N = UP_DIV(N, 4);
+    const int num_elems_in_N = ROUND_UP(N, 4);
+    const int num_vec4_in_K = UP_DIV(K, 4);
+    const int num_elems_in_K = ROUND_UP(K, 4);
+
+//    printf("%s, VECTOR_WIDTH: %i, M: %i, N: %i, K: %i, mBlocks: %i, nBlocks: %i, kBlocks: %i\n", mKernelName.c_str(), VECTOR_WIDTH, M, N, K, mBlocks, nBlocks, kBlocks);
 
     mGlobalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
     int idx            = 0;
@@ -102,7 +108,22 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         ret |= mKernel.setArg(idx++, static_cast<int>(mBlocks));
     }
     ret |= mKernel.setArg(idx++, static_cast<int>(N));
-    ret |= mKernel.setArg(idx++, static_cast<int>(nBlocks));
+//    ret |= mKernel.setArg(idx++, static_cast<int>(nBlocks));
+
+    if (mTransposeA){
+        ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_M));
+        ret |= mKernel.setArg(idx++, static_cast<int>(num_elems_in_M));
+    }
+
+    ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_N));
+    ret |= mKernel.setArg(idx++, static_cast<int>(num_elems_in_N));
+
+// !(A && B) == !A || !B --> de Morgan's Law
+// !(mTransposeA && !mTransposeB) == !mTransposeA || mTransposeB
+    if (!mTransposeA || mTransposeB){
+        ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_K));
+        ret |= mKernel.setArg(idx++, static_cast<int>(num_elems_in_K));
+    }
 
     mLocalWorkSize = localWS2DDefault(mGlobalWorkSize, mMaxWorkGroupSize, mOpenCLBackend->getOpenCLRuntime(), mKernelName, mKernel).first;
 #else

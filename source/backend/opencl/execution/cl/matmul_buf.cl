@@ -355,7 +355,11 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         __private const int K,
         __private const int kBlocks,
         __private const int N,
-        __private const int nBlocks) {
+        __private const int num_vec4_in_N,
+        __private const int num_elems_in_N,
+        __private const int num_vec4_in_K,
+        __private const int num_elems_in_K) {
+
     const int nBlock_idx = get_global_id(0);// output W
     const int mBlock_idx = get_global_id(1);// output H
 
@@ -367,12 +371,6 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
     for (short i = 0; i < VECTOR_WIDTH; i++){
         b_arr[i] = 0;
     }
-
-
-    const int num_vec4_in_K = UP_DIV(K, 4);
-    const int num_elems_in_K = ROUND_UP(K, 4);
-    const int num_vec4_in_N = UP_DIV(N, 4);
-    const int num_elems_in_N = ROUND_UP(N, 4);
 
 #ifdef BIAS
 #error BIAS NOT IMPLEMENTED
@@ -483,7 +481,11 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
         __private const int K,
         __private const int kBlocks,
         __private const int N,
-        __private const int nBlocks) {
+        __private const int num_vec4_in_N,
+        __private const int num_elems_in_N,
+        __private const int num_vec4_in_K,
+        __private const int num_elems_in_K) {
+
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
 
@@ -502,13 +504,7 @@ __kernel void matmul_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a
     FLOATX results = (FLOATX)(0);
 #endif
 
-    const int num_vec4_in_K = UP_DIV(K, 4);
-    const int num_elems_in_K = ROUND_UP(K, 4);
-    const int num_vec4_in_N = UP_DIV(N, 4);
-    const int num_elems_in_N = ROUND_UP(N, 4);
-
     int offset_iter_K = 0;
-
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx += 1) {
         short offset_movement = 0;
         a = load_with_movement(input_a, mBlock_idx, offset_iter_K, num_elems_in_K, num_vec4_in_K, &offset_movement);
@@ -602,7 +598,11 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
         __private const int M,
         __private const int mBlocks,
         __private const int N,
-        __private const int nBlocks) {
+        __private const int num_vec4_in_M,
+        __private const int num_elems_in_M,
+        __private const int num_vec4_in_N,
+        __private const int num_elems_in_N) {
+
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
 
@@ -622,11 +622,6 @@ __kernel void matmul_transA_buf(GLOBAL_SIZE_2_DIMS
         result_arr[i] = (FLOATX)(0);
     }
     #endif
-
-    const int num_vec4_in_M = UP_DIV(M, 4);
-    const int num_elems_in_M = ROUND_UP(M, 4);
-    const int num_vec4_in_N = UP_DIV(N, 4);
-    const int num_elems_in_N = ROUND_UP(N, 4);
 
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
         FLOATX a_arr[VECTOR_WIDTH];
@@ -763,7 +758,13 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
             __private const int M,
             __private const int mBlocks,
             __private const int N,
-            __private const int nBlocks) {
+            __private const int num_vec4_in_M,
+            __private const int num_elems_in_M,
+            __private const int num_vec4_in_N,
+            __private const int num_elems_in_N,
+            __private const int num_vec4_in_K,
+            __private const int num_elems_in_K) {
+
     const int nBlock_idx = get_global_id(0);
     const int mBlock_idx = get_global_id(1);
 
@@ -784,13 +785,6 @@ __kernel void matmul_transA_transB_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* 
         result_arr[i] = (FLOATX)(0);
     }
     #endif
-
-    const int num_vec4_in_M = UP_DIV(M, 4);
-    const int num_elems_in_M = ROUND_UP(M, 4);
-    const int num_vec4_in_K = UP_DIV(K, 4);
-    const int num_elems_in_K = ROUND_UP(K, 4);
-    const int num_vec4_in_N = UP_DIV(N, 4);
-    const int num_elems_in_N = ROUND_UP(N, 4);
 
     int offset_iter_K = 0;
 

@@ -104,9 +104,9 @@ public:
 
 protected:
     static bool test(MNNForwardType type, const std::string& device_name) {
-        for (int height_c = 1; height_c <= 20; height_c+=1) {
-            for (int width_c = 1; width_c <= 20; width_c+=1) {
-                for (int length = 1; length <= 20; length+=1) {
+        for (int height_c = 1; height_c <= 32; height_c+=1) {
+            for (int width_c = 1; width_c <= 32; width_c+=1) {
+                for (int length = 1; length <= 32; length+=1) {
                     int height_a = height_c, height_b = length, width_a = length, width_b = width_c;
                     for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a) {
                         int height_a = height_c, width_a = length;
