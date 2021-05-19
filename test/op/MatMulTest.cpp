@@ -96,24 +96,24 @@ public:
     virtual ~MatMulTest() = default;
 
 protected:
-    static bool test(MNNForwardType type, const std::string& device_name) {
-        for (int height_c = 1; height_c <= 20; ++height_c) {
-            for (int width_c = 1; width_c <= 20; ++width_c) {
-                for (int length = 1; length <= 20; ++length) {
+    static bool test(MNNForwardType type, const std::string& device_name){
+        for (int height_c = 1; height_c <= 32; ++height_c){
+            for (int width_c = 1; width_c <= 32; ++width_c){
+                for (int length = 1; length <= 32; ++length){
                     int height_a = height_c, height_b = length, width_a = length, width_b = width_c;
-                    for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a) {
+                    for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a){
                         int height_a = height_c, width_a = length;
-                        if (tranpose_a == 1) {
+                        if (tranpose_a == 1){
                             std::swap(height_a, width_a);
                         }
-                        for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b) {
+                        for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b){
                             int height_b = length, width_b = width_c;
-                            if (tranpose_b == 1) {
+                            if (tranpose_b == 1){
                                 std::swap(height_b, width_b);
                             }
                             bool succ = MatMulCommonTest::test(type, device_name, "MatMul", height_a, width_a, height_b,
                                                                width_b, tranpose_a != 0, tranpose_b != 0);
-                            if (!succ) {
+                            if (!succ){
                                 return false;
                             }
                         }

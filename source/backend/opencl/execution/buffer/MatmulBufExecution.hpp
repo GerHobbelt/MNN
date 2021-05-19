@@ -32,8 +32,6 @@ private:
     cl::Kernel mKernel;
     std::string mKernelName;
     uint32_t mMaxWorkGroupSize;
-    std::vector<int> mInput0Shape;
-    std::vector<int> mInput1Shape;
     OpenCLBackend *mOpenCLBackend;
     std::vector<uint32_t> mGlobalWorkSize{1, 1};
     std::vector<uint32_t> mLocalWorkSize{1, 1};

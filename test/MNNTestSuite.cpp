@@ -8,6 +8,7 @@
 
 #include "MNNTestSuite.h"
 #include <stdlib.h>
+#include <MNN/MNNDefine.h>
 
 MNNTestSuite* MNNTestSuite::gInstance = NULL;
 
@@ -39,6 +40,7 @@ void MNNTestSuite::run(const char* key) {
     for (int i = 0; i < suite->mTests.size(); ++i) {
         MNNTestCase* test = suite->mTests[i];
         if (test->name.find(prefix) == 0) {
+            MNN_PRINT("\trunning %s.\n", test->name.c_str());
             printf("\trunning %s.\n", test->name.c_str());
             auto res = test->run();
             if (!res) {
@@ -47,9 +49,11 @@ void MNNTestSuite::run(const char* key) {
         }
     }
     if (wrongs.empty()) {
+        MNN_PRINT("√√√ all <%s> tests passed.\n", key);
         printf("√√√ all <%s> tests passed.\n", key);
     }
     for (auto& wrong : wrongs) {
+        MNN_PRINT("Error: %s\n", wrong.c_str());
         printf("Error: %s\n", wrong.c_str());
     }
 }

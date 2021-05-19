@@ -28,6 +28,23 @@ using namespace MNN;
 using namespace MNN::Express;
 using namespace MNN::Train;
 
+static inline int getGpuMode(std::string type, std::string tuning = "WIDE") {
+    if (type.compare("ImageMode") == 0){
+        if (tuning.compare("None") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_NONE;
+        else if (tuning.compare("HEAVY") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_HEAVY;
+        else if (tuning.compare("WIDE") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_WIDE;
+        else if (tuning.compare("NORMAL") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_NORMAL;
+        else if (tuning.compare("FAST") == 0) return MNN_GPU_MEMORY_IMAGE+MNN_GPU_TUNING_FAST;
+    }
+    else if (type.compare("BufferMode") == 0){
+        if (tuning.compare("None") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_NONE;
+        else if (tuning.compare("HEAVY") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_HEAVY;
+        else if (tuning.compare("WIDE") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_WIDE;
+        else if (tuning.compare("NORMAL") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_NORMAL;
+        else if (tuning.compare("FAST") == 0) return MNN_GPU_MEMORY_BUFFER+MNN_GPU_TUNING_FAST;
+    }
+}
+
 void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwardType forward, uint epochs) {
     {
         // Load snapshot
@@ -36,7 +53,7 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
     }
     auto exe = Executor::getGlobalExecutor();
     BackendConfig config;
-    exe->setGlobalExecutorConfig(forward, config, 4);
+    exe->setGlobalExecutorConfig(forward, config, getGpuMode("BufferMode"));
     std::shared_ptr<SGD> sgd(new SGD(model));
     sgd->setMomentum(0.9f);
     // sgd->setMomentum2(0.99f);
@@ -71,10 +88,13 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
             dataLoader->reset();
             model->setIsTraining(true);
             Timer _100Time;
+            Timer _iterTimer;
             int lastIndex = 0;
             int moveBatchSize = 0;
+            auto meanForwardTime = 0.0f;
+            auto meanBackwardTime = 0.0f;
             for (int i = 0; i < iterations; i++) {
-                MNN_PRINT("New Iteration %i\n", i);
+//                MNN_PRINT("New Iteration %i\n", i);
                 // AUTOTIME;
                 auto trainData  = dataLoader->next();
                 auto example    = trainData[0];
@@ -87,6 +107,12 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                                          _Scalar<float>(0.0f));
                 auto predict = model->forward(example.first[0]);
                 auto loss    = _CrossEntropy(predict, newTarget);
+                auto lossValue = loss->readMap<float>()[0];
+//                MNN_PRINT("LOSS = %f", lossValue);
+                auto forwardTime = (float)_iterTimer.durationInUs() / 1000.0f;
+//                MNN_PRINT("Forward Time %f", forwardTime);
+                meanForwardTime += forwardTime/10.0;
+                _iterTimer.reset();
 //#define DEBUG_GRAD
 #ifdef DEBUG_GRAD
                 {
@@ -112,17 +138,24 @@ void MnistUtils::train(std::shared_ptr<Module> model, std::string root, MNNForwa
                 float rate   = LrScheduler::inv(0.01, epoch * iterations + i, 0.0001, 0.75);
                 sgd->setLearningRate(rate);
 
-                MNN_PRINT("Start SGD Step");
+//                MNN_PRINT("Start SGD Step");
                 sgd->step(loss);
-                MNN_PRINT("FIN SGD Step");
+                meanBackwardTime += (((float)_iterTimer.durationInUs() / 1000.0f) - forwardTime)/10.0;
+                _iterTimer.reset();
+//                MNN_PRINT("FIN SGD Step");
+
+
 
                 if (moveBatchSize % (10 * batchSize) == 0 || i == iterations - 1) {
 #ifdef MNN_USE_LOGCAT
                     MNN_PRINT("epoch: %i %i/%i\tloss: %f\tlr: %f\ttime: %f ms / %i iter",
                         epoch, moveBatchSize, dataLoader->size(), loss->readMap<float>()[0], rate, (float)_100Time.durationInUs() / 1000.0f,
                               (i - lastIndex));
+                    MNN_PRINT("Forward Time: %f ms\tBackward Time: %f ms\t", meanForwardTime, meanBackwardTime); // NOTE this is not correct if i == iterations - 1
                     _100Time.reset();
                     lastIndex = i;
+                    meanForwardTime = 0;
+                    meanBackwardTime = 0;
 #else
                     std::cout << "epoch: " << (epoch);
                     std::cout << "  " << moveBatchSize << " / " << dataLoader->size();
