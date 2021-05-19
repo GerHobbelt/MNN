@@ -89,8 +89,6 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int num_vec4_in_K = UP_DIV(K, 4);
     const int num_elems_in_K = ROUND_UP(K, 4);
 
-//    printf("%s, VECTOR_WIDTH: %i, M: %i, N: %i, K: %i, mBlocks: %i, nBlocks: %i, kBlocks: %i\n", mKernelName.c_str(), VECTOR_WIDTH, M, N, K, mBlocks, nBlocks, kBlocks);
-
     mGlobalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
     int idx            = 0;
     ret |= mKernel.setArg(idx++, mGlobalWorkSize[0]);
@@ -108,7 +106,6 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         ret |= mKernel.setArg(idx++, static_cast<int>(mBlocks));
     }
     ret |= mKernel.setArg(idx++, static_cast<int>(N));
-//    ret |= mKernel.setArg(idx++, static_cast<int>(nBlocks));
 
     if (mTransposeA){
         ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_M));
@@ -118,8 +115,8 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_N));
     ret |= mKernel.setArg(idx++, static_cast<int>(num_elems_in_N));
 
-// !(A && B) == !A || !B --> de Morgan's Law
-// !(mTransposeA && !mTransposeB) == !mTransposeA || mTransposeB
+    // !(A && B) == !A || !B --> de Morgan's Law
+    // !(mTransposeA && !mTransposeB) == !mTransposeA || mTransposeB
     if (!mTransposeA || mTransposeB){
         ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_K));
         ret |= mKernel.setArg(idx++, static_cast<int>(num_elems_in_K));
