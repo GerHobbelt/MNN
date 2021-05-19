@@ -154,7 +154,6 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     //处理二维矩阵相乘，N C相当于H W
     //二维矩阵相乘
     cl_int ret = CL_SUCCESS;
-
     if(mTransposeA) {
         const int height        = input0Shape.at(3);//input0 H
         const int outputChannel = input0Shape.at(0);//input0 W
