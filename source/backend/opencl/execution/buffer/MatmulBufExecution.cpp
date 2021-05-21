@@ -46,13 +46,6 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
 
     int VECTOR_WIDTH = 4;
-//    if (M > 12 && N > 12 && K > 12){
-//        VECTOR_WIDTH = 16;
-//    } else if (M > 4 && N > 4 && K > 4){
-//        VECTOR_WIDTH = 8;
-//    } else {
-//        VECTOR_WIDTH = 4;
-//    }
 
     const int kBlocks = UP_DIV(K, VECTOR_WIDTH); // outputChannelBlocks
     const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
@@ -86,9 +79,7 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         }
         buildOptions.emplace("-DMATMUL_V2");
         buildOptions.emplace("-DVECTOR_WIDTH=" + std::to_string(VECTOR_WIDTH));
-//        buildOptions.emplace("-DvloadX=vload" + std::to_string(VECTOR_WIDTH));
         buildOptions.emplace("-DNBLOCKS="+std::to_string(nBlocks));
-//        buildOptions.emplace("-DKBLOCKS="+std::to_string(kBlocks));
 
 
         mKernel           = runtime->buildKernel("matmul_buf", mKernelName, buildOptions);
