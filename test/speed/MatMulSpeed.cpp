@@ -159,7 +159,7 @@ public:
 class MatMulSpeedLoopedTest: public MNNTestCase {
 public:
     virtual bool run() {
-        int start = 1, end = 10;
+        int start = 1, end = 100;
         for (short i = start; i < end; ++i){
             auto res = _run(i, i, i);
             if (!res) {
@@ -209,13 +209,14 @@ public:
         }
         const auto num_loops = 100;
         MNN_PRINT("MatMul: [%d, %d, %d], run %d\n", e, l, h, num_loops);
-        MNN::Timer loopTimer;
+        // MNN::Timer loopTimer;
         for (int t = 0; t < num_loops; ++t) {
             x0->writeMap<float>();
             x1->writeMap<float>();
             y->readMap<float>();
         }
-        printf("%f,", ((float)loopTimer.durationInUs() / 1000.0f) / (float)num_loops);
+        // printf("%f,", ((float)loopTimer.durationInUs() / 1000.0f) / (float)num_loops);
+        printf("\n");
         return true;
     }
 };

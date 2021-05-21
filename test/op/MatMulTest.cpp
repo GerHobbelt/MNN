@@ -103,13 +103,18 @@ protected:
         for (int height_c = 1; height_c <= 32; ++height_c){
             for (int width_c = 1; width_c <= 32; ++width_c){
                 for (int length = 1; length <= 32; ++length){
+        // for (int height_c = 86; height_c <= 86; ++height_c){
+        //     for (int width_c = 86; width_c <= 86; ++width_c){
+        //         for (int length = 86; length <= 86; ++length){
                     int height_a = height_c, height_b = length, width_a = length, width_b = width_c;
-                    for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a){
+                    // for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a){
+                    for (int tranpose_a = 0; tranpose_a <= 0; ++tranpose_a){
                         int height_a = height_c, width_a = length;
                         if (tranpose_a == 1){
                             std::swap(height_a, width_a);
                         }
-                        for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b){
+                        // for (int tranpose_b = 0; tranpose_b <= 1; ++tranpose_b){
+                        for (int tranpose_b = 0; tranpose_b <= 0; ++tranpose_b){
                             int height_b = length, width_b = width_c;
                             if (tranpose_b == 1){
                                 std::swap(height_b, width_b);

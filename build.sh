@@ -126,10 +126,9 @@ adb shell chmod 0777 $ANDROID_DIR/run_test.out
 # adb shell "echo >> $ANDROID_DIR/test_opencl.txt"
 # adb shell "echo Build Flags: ABI=$ABI  OpenMP=$OPENMP Vulkan=$VULKAN OpenCL=$OPENCL OpenGL=$OPENGL >> $ANDROID_DIR/test_opencl.txt"
 
-# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out op/matmul 3 >> $ANDROID_DIR/test_opencl.txt"
-# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out speed/MatMulTest 3 >> $ANDROID_DIR/test_opencl.txt"
+# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out op/matmul 3 > $ANDROID_DIR/test_opencl.txt"
+# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out speed/MatMulTest 3 > $ANDROID_DIR/test_opencl.txt"
 adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out speed/MatMulSpeedLoopedTest 3 > $ANDROID_DIR/test_opencl.txt"
-# adb shell "LD_LIBRARY_PATH=$ANDROID_DIR $ANDROID_DIR/run_test.out expr/MatMul 3 >> $ANDROID_DIR/test_opencl.txt"
 
 adb pull $ANDROID_DIR/test_opencl.txt .
 

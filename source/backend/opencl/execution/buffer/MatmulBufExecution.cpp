@@ -10,6 +10,8 @@
 
 #include "backend/opencl/execution/buffer/MatmulBufExecution.hpp"
 
+#include <MNN/AutoTime.hpp>
+
 namespace MNN {
 namespace OpenCL {
 
@@ -51,6 +53,17 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
 //    } else {
 //        VECTOR_WIDTH = 4;
 //    }
+
+    const int kBlocks = UP_DIV(K, VECTOR_WIDTH); // outputChannelBlocks
+    const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
+    const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
+
+    const int num_vec4_in_M = UP_DIV(M, 4);
+    const int num_elems_in_M = ROUND_UP(M, 4);
+    const int num_vec4_in_N = UP_DIV(N, 4);
+    const int num_elems_in_N = ROUND_UP(N, 4);
+    const int num_vec4_in_K = UP_DIV(K, 4);
+    const int num_elems_in_K = ROUND_UP(K, 4);
     
     if (mKernel.get() == nullptr) {
         std::set<std::string> buildOptions;
@@ -74,22 +87,13 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         buildOptions.emplace("-DMATMUL_V2");
         buildOptions.emplace("-DVECTOR_WIDTH=" + std::to_string(VECTOR_WIDTH));
 //        buildOptions.emplace("-DvloadX=vload" + std::to_string(VECTOR_WIDTH));
+        buildOptions.emplace("-DNBLOCKS="+std::to_string(nBlocks));
+//        buildOptions.emplace("-DKBLOCKS="+std::to_string(kBlocks));
+
 
         mKernel           = runtime->buildKernel("matmul_buf", mKernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
     }
-
-
-    const int kBlocks = UP_DIV(K, VECTOR_WIDTH); // outputChannelBlocks
-    const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
-    const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
-
-    const int num_vec4_in_M = UP_DIV(M, 4);
-    const int num_elems_in_M = ROUND_UP(M, 4);
-    const int num_vec4_in_N = UP_DIV(N, 4);
-    const int num_elems_in_N = ROUND_UP(N, 4);
-    const int num_vec4_in_K = UP_DIV(K, 4);
-    const int num_elems_in_K = ROUND_UP(K, 4);
 
     mGlobalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
     int idx            = 0;
@@ -108,6 +112,7 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         ret |= mKernel.setArg(idx++, static_cast<int>(mBlocks));
     }
     ret |= mKernel.setArg(idx++, static_cast<int>(N));
+//    ret |= mKernel.setArg(idx++, static_cast<int>(nBlocks));
 
     if (mTransposeA){
         ret |= mKernel.setArg(idx++, static_cast<int>(num_vec4_in_M));
@@ -215,6 +220,8 @@ ErrorCode MatMulBufExecution::onExecute(const std::vector<Tensor *> &inputs, con
 
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
+//    printf("Actually Running\n");
+
     #ifdef ENABLE_OPENCL_TIME_PROFILER
         cl::Event event;
         runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, &event);
@@ -222,7 +229,9 @@ ErrorCode MatMulBufExecution::onExecute(const std::vector<Tensor *> &inputs, con
         int costTime = (int)mOpenCLBackend->getOpenCLRuntime()->getCostTime(&event);
         MNN_PRINT("kernel cost:%d    us MatmulBuf %s\n", costTime, mKernelName.c_str());
     #else
-    runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, nullptr);
+        MNN::Timer timer;
+        runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, nullptr);
+        printf("%f,", ((float)timer.durationInUs() / 1000.0f));
     #endif
     
 #ifdef LOG_VERBOSE
