@@ -21,7 +21,7 @@ MatMulBufExecution::MatMulBufExecution(const std::vector<Tensor *> &inputs, cons
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
 }
 ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
-#define MATMUL_V2
+//#define MATMUL_V2
 #ifdef MATMUL_V2
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
@@ -219,10 +219,9 @@ ErrorCode MatMulBufExecution::onExecute(const std::vector<Tensor *> &inputs, con
         
         int costTime = (int)mOpenCLBackend->getOpenCLRuntime()->getCostTime(&event);
         MNN_PRINT("kernel cost:%d    us MatmulBuf %s\n", costTime, mKernelName.c_str());
+//        printf("%f,", (float)costTime / 1000.0f);
     #else
-        MNN::Timer timer;
         runKernel2D(mKernel, mGlobalWorkSize, mLocalWorkSize, runtime, nullptr);
-        printf("%f,", ((float)timer.durationInUs() / 1000.0f));
     #endif
     
 #ifdef LOG_VERBOSE
