@@ -23,6 +23,8 @@ MatMulBufExecution::MatMulBufExecution(const std::vector<Tensor *> &inputs, cons
 ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
 //#define MATMUL_V2
 #ifdef MATMUL_V2
+//#define LOCAL_MEM
+
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
     Tensor *input0 = inputs[0];
@@ -45,10 +47,15 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
     const int N = mTransposeB ? input1Shape.at(0) : input1Shape.at(3); // width
     const int K = mTransposeA ? input0Shape.at(0) : input0Shape.at(3); // outputChannel
 
-    int VECTOR_WIDTH = 4;
+    int VECTOR_WIDTH = 16;
 
     const int kBlocks = UP_DIV(K, VECTOR_WIDTH); // outputChannelBlocks
-    const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : UP_DIV(M, 1); // heightblocks
+
+#ifdef LOCAL_MEM
+    const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : ROUND_UP(M, VECTOR_WIDTH); // heightblocks
+#else
+    const int mBlocks = mTransposeA ? UP_DIV(M, VECTOR_WIDTH) : M; // heightblocks
+#endif
     const int nBlocks = UP_DIV(N, VECTOR_WIDTH); // widthblocks
 
     const int num_vec4_in_M = UP_DIV(M, 4);
@@ -78,9 +85,10 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
             buildOptions.emplace("-DFLOATX=float" + std::to_string(VECTOR_WIDTH));
         }
         buildOptions.emplace("-DMATMUL_V2");
+#ifdef LOCAL_MEM
+        buildOptions.emplace("-DLOCAL_MEM");
+#endif
         buildOptions.emplace("-DVECTOR_WIDTH=" + std::to_string(VECTOR_WIDTH));
-        buildOptions.emplace("-DNBLOCKS="+std::to_string(nBlocks));
-
 
         mKernel           = runtime->buildKernel("matmul_buf", mKernelName, buildOptions);
         mMaxWorkGroupSize = static_cast<uint32_t>(runtime->getMaxWorkGroupSize(mKernel));
@@ -120,7 +128,19 @@ ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, cons
         ret |= mKernel.setArg(idx++, static_cast<int>(num_elems_in_K));
     }
 
+#ifdef LOCAL_MEM
+    if (mTransposeA){
+        mLocalWorkSize = {static_cast<uint32_t>(nBlocks), static_cast<uint32_t>(mBlocks)};
+    } else {
+        // we are going to use tiles of size (VECTOR_WIDTH, VECTOR_WIDTH) FLOAT elements per work-group.
+        // This results in tiles of size (1, VECTOR_WIDTH) FLOATX elements per work-group
+        mLocalWorkSize = {static_cast<uint32_t>(1), static_cast<uint32_t>(VECTOR_WIDTH)};
+    }
+#else
     mLocalWorkSize = localWS2DDefault(mGlobalWorkSize, mMaxWorkGroupSize, mOpenCLBackend->getOpenCLRuntime(), mKernelName, mKernel).first;
+#endif
+
+
 #else
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
@@ -210,8 +230,9 @@ ErrorCode MatMulBufExecution::onExecute(const std::vector<Tensor *> &inputs, con
 #endif
 
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
-
 //    printf("Actually Running\n");
+//    printf("GlobalWorkSize: (%i, %i)\n", mGlobalWorkSize[0], mGlobalWorkSize[1]);
+//    printf("LocalWorkSize: (%i, %i)\n", mLocalWorkSize[0], mLocalWorkSize[1]);
 
     #ifdef ENABLE_OPENCL_TIME_PROFILER
         cl::Event event;

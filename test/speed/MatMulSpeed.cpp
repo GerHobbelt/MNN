@@ -159,7 +159,7 @@ public:
 class MatMulSpeedLoopedTest: public MNNTestCase {
 public:
     virtual bool run() {
-        int start = 1, end = 1001, step = 10;
+        int start = 1, end = 100, step = 1;
         for (short i = start; i <= end; i+= step){
             auto res = _run(i, i, i);
             if (!res) {

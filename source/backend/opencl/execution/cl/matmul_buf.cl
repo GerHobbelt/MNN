@@ -16,20 +16,24 @@ return;                                                                         
 
 #ifdef MATMUL_V2
 
+//#ifndef LOCAL_MEM
+//#define LOCAL_MEM
+//#endif
+
 #ifndef VECTOR_WIDTH
 #error VECTOR_WIDTH must be defined
 #endif
 
 //#define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
 //#define ROUND_UP(x, y) (((x) + (y) - (1)) / (y) * (y))
-#define MUST_PRINT() (get_global_id(0) == 0 && get_global_id(1) == 0)
+//#define MUST_PRINT() (get_global_id(0) == 0 && get_global_id(1) == 0)
 
 inline FLOATX load(const __global FLOAT* p, const short row, const short col, const short width, const short num_cols){
 // P is pointer to buffer memory
 // ROW IS ROW_IDX
 // COL IS COLUMN_IDX WHERE COLUMN_WIDTH=4 IE ITERATOR VALUE
-// WIDTH IS THE MEMORY WIDTH IE ROUND_UP(K, 4) OR ROUND_UP(N, 4)
-// NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4 IE UP_DIV(K, 4) OR UP_DIV(N, 4)
+// WIDTH IS THE MEMORY WIDTH
+// NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4
 #if VECTOR_WIDTH == 4
     return vload4(row * num_cols + col, p);
 #elif VECTOR_WIDTH == 8
@@ -154,8 +158,8 @@ inline void write(FLOATX *r, __global FLOAT* p, const short row, const short col
     // P is pointer to buffer memory
     // ROW IS ROW_IDX
     // COL IS COLUMN_IDX WHERE COLUMN_WIDTH=4 IE ITERATOR VALUE
-    // WIDTH IS THE MEMORY WIDTH IE ROUND_UP(K, 4) OR ROUND_UP(N, 4)
-    // NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4 IE UP_DIV(K, 4) OR UP_DIV(N, 4)
+    // WIDTH IS THE MEMORY WIDTH
+    // NUM_COLS IS THE NUMBER OF COLUMNS WITH WIDTH=4
 #if VECTOR_WIDTH==4
     vstore4(*r, row*num_cols+col, p);
 #elif VECTOR_WIDTH==8
@@ -287,6 +291,103 @@ inline void transpose(FLOATX *i, FLOATX *o) {
 #endif
 }
 
+inline void transposeShared(FLOATX *i, FLOATX *o, const int idx) {
+#if VECTOR_WIDTH == 4
+    switch(idx){
+        case 0:
+            o[0] = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0);
+            break;
+        case 1:
+            o[1] = (FLOATX)(i[0].s1, i[1].s1, i[2].s1, i[3].s1);
+            break;
+        case 2:
+            o[2] = (FLOATX)(i[0].s2, i[1].s2, i[2].s2, i[3].s2);
+            break;
+        case 3:
+            o[3] = (FLOATX)(i[0].s3, i[1].s3, i[2].s3, i[3].s3);
+            break;
+    }
+#elif VECTOR_WIDTH == 8
+    switch(idx){
+        case 0:
+            o[0]  = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0, i[4].s0, i[5].s0, i[6].s0, i[7].s0);
+            break;
+        case 1:
+            o[1]  = (FLOATX)(i[0].s1, i[1].s1, i[2].s1, i[3].s1, i[4].s1, i[5].s1, i[6].s1, i[7].s1);
+            break;
+        case 2:
+            o[2]  = (FLOATX)(i[0].s2, i[1].s2, i[2].s2, i[3].s2, i[4].s2, i[5].s2, i[6].s2, i[7].s2);
+            break;
+        case 3:
+            o[3]  = (FLOATX)(i[0].s3, i[1].s3, i[2].s3, i[3].s3, i[4].s3, i[5].s3, i[6].s3, i[7].s3);
+            break;
+        case 4:
+            o[4]  = (FLOATX)(i[0].s4, i[1].s4, i[2].s4, i[3].s4, i[4].s4, i[5].s4, i[6].s4, i[7].s4);
+            break;
+        case 5:
+            o[5]  = (FLOATX)(i[0].s5, i[1].s5, i[2].s5, i[3].s5, i[4].s5, i[5].s5, i[6].s5, i[7].s5);
+            break;
+        case 6:
+            o[6]  = (FLOATX)(i[0].s6, i[1].s6, i[2].s6, i[3].s6, i[4].s6, i[5].s6, i[6].s6, i[7].s6);
+            break;
+        case 7:
+            o[7]  = (FLOATX)(i[0].s7, i[1].s7, i[2].s7, i[3].s7, i[4].s7, i[5].s7, i[6].s7, i[7].s7);
+            break;
+    }
+#elif VECTOR_WIDTH == 16
+    switch (idx){
+        case 0:
+            o[0]  = (FLOATX)(i[0].s0, i[1].s0, i[2].s0, i[3].s0, i[4].s0, i[5].s0, i[6].s0, i[7].s0, i[8].s0, i[9].s0, i[10].s0, i[11].s0, i[12].s0, i[13].s0, i[14].s0, i[15].s0);
+            break;
+        case 1:
+            o[1]  = (FLOATX)(i[0].s1, i[1].s1, i[2].s1, i[3].s1, i[4].s1, i[5].s1, i[6].s1, i[7].s1, i[8].s1, i[9].s1, i[10].s1, i[11].s1, i[12].s1, i[13].s1, i[14].s1, i[15].s1);
+            break;
+        case 2:
+            o[2]  = (FLOATX)(i[0].s2, i[1].s2, i[2].s2, i[3].s2, i[4].s2, i[5].s2, i[6].s2, i[7].s2, i[8].s2, i[9].s2, i[10].s2, i[11].s2, i[12].s2, i[13].s2, i[14].s2, i[15].s2);
+            break;
+        case 3:
+            o[3]  = (FLOATX)(i[0].s3, i[1].s3, i[2].s3, i[3].s3, i[4].s3, i[5].s3, i[6].s3, i[7].s3, i[8].s3, i[9].s3, i[10].s3, i[11].s3, i[12].s3, i[13].s3, i[14].s3, i[15].s3);
+            break;
+        case 4:
+            o[4]  = (FLOATX)(i[0].s4, i[1].s4, i[2].s4, i[3].s4, i[4].s4, i[5].s4, i[6].s4, i[7].s4, i[8].s4, i[9].s4, i[10].s4, i[11].s4, i[12].s4, i[13].s4, i[14].s4, i[15].s4);
+            break;
+        case 5:
+            o[5]  = (FLOATX)(i[0].s5, i[1].s5, i[2].s5, i[3].s5, i[4].s5, i[5].s5, i[6].s5, i[7].s5, i[8].s5, i[9].s5, i[10].s5, i[11].s5, i[12].s5, i[13].s5, i[14].s5, i[15].s5);
+            break;
+        case 6:
+            o[6]  = (FLOATX)(i[0].s6, i[1].s6, i[2].s6, i[3].s6, i[4].s6, i[5].s6, i[6].s6, i[7].s6, i[8].s6, i[9].s6, i[10].s6, i[11].s6, i[12].s6, i[13].s6, i[14].s6, i[15].s6);
+            break;
+        case 7:
+            o[7]  = (FLOATX)(i[0].s7, i[1].s7, i[2].s7, i[3].s7, i[4].s7, i[5].s7, i[6].s7, i[7].s7, i[8].s7, i[9].s7, i[10].s7, i[11].s7, i[12].s7, i[13].s7, i[14].s7, i[15].s7);
+            break;
+        case 8:
+            o[8]  = (FLOATX)(i[0].s8, i[1].s8, i[2].s8, i[3].s8, i[4].s8, i[5].s8, i[6].s8, i[7].s8, i[8].s8, i[9].s8, i[10].s8, i[11].s8, i[12].s8, i[13].s8, i[14].s8, i[15].s8);
+            break;
+        case 9:
+            o[9]  = (FLOATX)(i[0].s9, i[1].s9, i[2].s9, i[3].s9, i[4].s9, i[5].s9, i[6].s9, i[7].s9, i[8].s9, i[9].s9, i[10].s9, i[11].s9, i[12].s9, i[13].s9, i[14].s9, i[15].s9);
+            break;
+        case 10:
+            o[10] = (FLOATX)(i[0].sa, i[1].sa, i[2].sa, i[3].sa, i[4].sa, i[5].sa, i[6].sa, i[7].sa, i[8].sa, i[9].sa, i[10].sa, i[11].sa, i[12].sa, i[13].sa, i[14].sa, i[15].sa);
+            break;
+        case 11:
+            o[11] = (FLOATX)(i[0].sb, i[1].sb, i[2].sb, i[3].sb, i[4].sb, i[5].sb, i[6].sb, i[7].sb, i[8].sb, i[9].sb, i[10].sb, i[11].sb, i[12].sb, i[13].sb, i[14].sb, i[15].sb);
+            break;
+        case 12:
+            o[12] = (FLOATX)(i[0].sc, i[1].sc, i[2].sc, i[3].sc, i[4].sc, i[5].sc, i[6].sc, i[7].sc, i[8].sc, i[9].sc, i[10].sc, i[11].sc, i[12].sc, i[13].sc, i[14].sc, i[15].sc);
+            break;
+        case 13:
+            o[13] = (FLOATX)(i[0].sd, i[1].sd, i[2].sd, i[3].sd, i[4].sd, i[5].sd, i[6].sd, i[7].sd, i[8].sd, i[9].sd, i[10].sd, i[11].sd, i[12].sd, i[13].sd, i[14].sd, i[15].sd);
+            break;
+        case 14:
+            o[14] = (FLOATX)(i[0].se, i[1].se, i[2].se, i[3].se, i[4].se, i[5].se, i[6].se, i[7].se, i[8].se, i[9].se, i[10].se, i[11].se, i[12].se, i[13].se, i[14].se, i[15].se);
+            break;
+        case 15:
+            o[15] = (FLOATX)(i[0].sf, i[1].sf, i[2].sf, i[3].sf, i[4].sf, i[5].sf, i[6].sf, i[7].sf, i[8].sf, i[9].sf, i[10].sf, i[11].sf, i[12].sf, i[13].sf, i[14].sf, i[15].sf);
+            break;
+    }
+#endif
+}
+
 inline void dot1D(FLOATX *A, FLOATX *B, FLOATX *C){
 #if VECTOR_WIDTH >= 4
     C->s0 += dotProd(*A, B[0]);
@@ -347,11 +448,6 @@ inline void setRemainingToZero(FLOATX *A, short remain){
 }
 
 #define NUM_VEC4_PER_VECTOR VECTOR_WIDTH/4
-#ifndef NBLOCKS
-#error NBLOCKS must be defined
-#endif
-
-#define LOCAL_MEM
 
 __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         __global const FLOAT* input_b,
@@ -367,21 +463,36 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         __private const int num_vec4_in_K,
         __private const int num_elems_in_K) {
 
+#ifdef LOCAL_MEM
+    // we are going to use tiles of size (VECTOR_WIDTH, VECTOR_WIDTH) FLOAT elements per work-group.
+    // This results in tiles of size (1, VECTOR_WIDTH) FLOATX elements per work-group
+
+    // n = column index of work-item within work-group
+    // m = row index of work-item within work-group
+    // n_group = column index of work-group within global indexing space
+    // m_group = row index of work-group within global indexing space
+    // nBlock_idx = column index of work-item within global indexing space
+    // mBlock_idx = row index of work-item within global indexing space
+    const int n = get_local_id(0); // {0}
+    const int m = get_local_id(1); // {0, ..., VECTOR_WIDTH - 1}
+    const int n_group = get_group_id(0); // {0, ..., (nBlocks/VECTOR_WIDTH) - 1}
+    const int m_group = get_group_id(1); // {0, ..., (mBlocks/VECTOR_WIDTH) - 1}
+    const int nBlock_idx = n_group + n;
+    const int mBlock_idx = m_group * VECTOR_WIDTH + m;
+#else
     const int nBlock_idx = get_global_id(0);// output W
     const int mBlock_idx = get_global_id(1);// output H
+#endif
 
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
+
     FLOATX a;
 
 #ifdef LOCAL_MEM
-    __local FLOATX b_arr[NBLOCKS][VECTOR_WIDTH];
-    __local int isBLoaded[NBLOCKS];
+    __local FLOATX b_arr[VECTOR_WIDTH];
+    __local FLOATX b_trans_arr[VECTOR_WIDTH];
 #else
     FLOATX b_arr[VECTOR_WIDTH];
-#endif
-
-#ifdef LOCAL_MEM
-#else
 #endif
 
 #ifdef BIAS
@@ -391,24 +502,14 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
 #endif
     int offset_iter_K = 0;
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
-        #ifdef LOCAL_MEM
-        isBLoaded[nBlock_idx] = 0;
-        barrier(CLK_LOCAL_MEM_FENCE);
-        #else
-        #endif
-
         short offset_movement = 0;
         a = load_with_movement(input_a, mBlock_idx, offset_iter_K, num_elems_in_K, num_vec4_in_K, &offset_movement);
 
 #ifdef LOCAL_MEM
-        if(!atomic_cmpxchg(&(isBLoaded[nBlock_idx]), 0, 1)){
-            short remain = max((kBlock_idx + 1) * VECTOR_WIDTH - K, 0);
-            for (short i = 0; i < VECTOR_WIDTH - remain; i++){
-                b_arr[nBlock_idx][i] = load(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx*NUM_VEC4_PER_VECTOR, num_elems_in_N, num_vec4_in_N);
-            }
-            for (short i = 0; i < remain; i++){
-                b_arr[nBlock_idx][VECTOR_WIDTH - 1 - i] = 0;
-            }
+        if ((kBlock_idx * VECTOR_WIDTH) + m < K){
+            b_arr[m] = load(input_b, kBlock_idx*VECTOR_WIDTH + m, nBlock_idx*NUM_VEC4_PER_VECTOR, num_elems_in_N, num_vec4_in_N);
+        } else {
+            b_arr[m] = (FLOATX)(0);
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 #else
@@ -420,14 +521,15 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
             b_arr[VECTOR_WIDTH - 1 - i] = 0;
         }
 #endif
-        FLOATX btmp_arr[VECTOR_WIDTH];
 
 #ifdef LOCAL_MEM
-        transpose(&(b_arr[nBlock_idx]), btmp_arr);
+        transposeShared(b_arr, b_trans_arr, m);
+        barrier(CLK_LOCAL_MEM_FENCE);
 #else
-        transpose(b_arr, btmp_arr);
+        FLOATX b_trans_arr[VECTOR_WIDTH];
+        transpose(b_arr, b_trans_arr);
 #endif
-        dot1D(&a, btmp_arr, &results);
+        dot1D(&a, b_trans_arr, &results);
         offset_iter_K += offset_movement;
 #ifdef LOCAL_MEM
         barrier(CLK_LOCAL_MEM_FENCE);
