@@ -351,6 +351,8 @@ inline void setRemainingToZero(FLOATX *A, short remain){
 #error NBLOCKS must be defined
 #endif
 
+#define LOCAL_MEM
+
 __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
         __global const FLOAT* input_b,
 #ifdef BIAS
@@ -370,8 +372,17 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
 
     DEAL_NON_UNIFORM_DIM2(nBlock_idx, mBlock_idx);
     FLOATX a;
+
+#ifdef LOCAL_MEM
     __local FLOATX b_arr[NBLOCKS][VECTOR_WIDTH];
     __local int isBLoaded[NBLOCKS];
+#else
+    FLOATX b_arr[VECTOR_WIDTH];
+#endif
+
+#ifdef LOCAL_MEM
+#else
+#endif
 
 #ifdef BIAS
 #error BIAS NOT IMPLEMENTED
@@ -380,12 +391,16 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
 #endif
     int offset_iter_K = 0;
     for (short kBlock_idx = 0; kBlock_idx < kBlocks; kBlock_idx++) {
+        #ifdef LOCAL_MEM
         isBLoaded[nBlock_idx] = 0;
         barrier(CLK_LOCAL_MEM_FENCE);
+        #else
+        #endif
 
         short offset_movement = 0;
         a = load_with_movement(input_a, mBlock_idx, offset_iter_K, num_elems_in_K, num_vec4_in_K, &offset_movement);
 
+#ifdef LOCAL_MEM
         if(!atomic_cmpxchg(&(isBLoaded[nBlock_idx]), 0, 1)){
             short remain = max((kBlock_idx + 1) * VECTOR_WIDTH - K, 0);
             for (short i = 0; i < VECTOR_WIDTH - remain; i++){
@@ -396,16 +411,34 @@ __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
             }
         }
         barrier(CLK_LOCAL_MEM_FENCE);
-
+#else
+        short remain = max((kBlock_idx + 1) * VECTOR_WIDTH - K, 0);
+        for (short i = 0; i < VECTOR_WIDTH - remain; i++){
+            b_arr[i] = load(input_b, kBlock_idx*VECTOR_WIDTH + i, nBlock_idx*NUM_VEC4_PER_VECTOR, num_elems_in_N, num_vec4_in_N);
+        }
+        for (short i = 0; i < remain; i++){
+            b_arr[VECTOR_WIDTH - 1 - i] = 0;
+        }
+#endif
         FLOATX btmp_arr[VECTOR_WIDTH];
-        transpose(&(b_arr[nBlock_idx]), btmp_arr);
-        dot1D(&a, btmp_arr, &results);
 
+#ifdef LOCAL_MEM
+        transpose(&(b_arr[nBlock_idx]), btmp_arr);
+#else
+        transpose(b_arr, btmp_arr);
+#endif
+        dot1D(&a, btmp_arr, &results);
         offset_iter_K += offset_movement;
+#ifdef LOCAL_MEM
         barrier(CLK_LOCAL_MEM_FENCE);
+#else
+#endif
     }
     write(&results, output_c, mBlock_idx, nBlock_idx *  NUM_VEC4_PER_VECTOR, num_elems_in_N, num_vec4_in_N);
+#ifdef LOCAL_MEM
     barrier(CLK_LOCAL_MEM_FENCE);
+#else
+#endif
 }
 #else
 __kernel void matmul_buf(GLOBAL_SIZE_2_DIMS __global const FLOAT* input_a,
