@@ -67,16 +67,12 @@ protected:
         auto output  = _MatMul(input_a, input_b, tranpose_a, tranpose_b);
         vector<float> data_a, data_b, data_c;
         for (int i = 0; i < height_a * width_a; ++i) {
-            // auto c = randomCreate(i);
-            // data_a.push_back((float)c / 255.f);
-            auto c = i;
-            data_a.push_back((float)c);
+            auto c = randomCreate(i);
+            data_a.push_back((float)c / 255.f);
         }
         for (int i = 0; i < height_b * width_b; ++i) {
-            // auto c = randomCreate(10 - i);
-            // data_b.push_back((float)c / 255.f);
-            auto c = i;
-            data_b.push_back((float)c);
+            auto c = randomCreate(10 - i);
+            data_b.push_back((float)c / 255.f);
         }
         reference_matmul(data_a, data_b, data_c, width_a, width_b, tranpose_a, tranpose_b);
         ::memcpy(input_a->writeMap<float>(), data_a.data(), data_a.size() * sizeof(float));
@@ -109,7 +105,7 @@ protected:
                 for (int length = 1; length <= 32; ++length){
         // for (int height_c = 5; height_c <= 5; ++height_c){
         //     for (int width_c = 7; width_c <= 7; ++width_c){
-                // for (int length = 6; length <= 6; ++length){
+        //         for (int length = 6; length <= 6; ++length){
                     int height_a = height_c, height_b = length, width_a = length, width_b = width_c;
                     // for (int tranpose_a = 0; tranpose_a <= 1; ++tranpose_a){
                     for (int tranpose_a = 0; tranpose_a <= 0; ++tranpose_a){
