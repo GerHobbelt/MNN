@@ -21,9 +21,9 @@ MatMulBufExecution::MatMulBufExecution(const std::vector<Tensor *> &inputs, cons
     mOpenCLBackend = static_cast<OpenCLBackend *>(backend);
 }
 ErrorCode MatMulBufExecution::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
-//#define MATMUL_V2
+#define MATMUL_V2
 #ifdef MATMUL_V2
-//#define LOCAL_MEM
+#define LOCAL_MEM
 
     auto runtime = mOpenCLBackend->getOpenCLRuntime();
 
