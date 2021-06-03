@@ -357,10 +357,8 @@ cl::Kernel OpenCLRuntime::buildKernel(const std::string &programName, const std:
     auto buildProgramInter = mBuildProgramMap.find(key);
     cl::Program program;
     if (buildProgramInter != mBuildProgramMap.end()) {
-//        MNN_PRINT("Found existing Kernel %s", programName.c_str());
         program = buildProgramInter->second;
     } else {
-//        MNN_PRINT("Building Kernel %s", programName.c_str());
         this->loadProgram(programName, &program);
         auto status = this->buildProgram(buildOptionsStr, &program);
         if (!status) {
