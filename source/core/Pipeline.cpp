@@ -74,9 +74,8 @@ static bool _supportQuant(const Op* op, const std::vector<Tensor*>& inputs, cons
             } else {
                 return false;
             }
-        case OpType_BinaryOp:
-            return type == MNN_FORWARD_NN;
-            return false;
+       case OpType_BinaryOp:
+           return true;
     }
     return false;
 }
@@ -190,6 +189,7 @@ Pipeline::Pipeline(Schedule::PipelineInfo&& info, bool allocInput, bool outputSt
 #else
 {
 #endif
+    rt->onCheckInfo(info.first.info);
     mRuntime = rt;
     mCpuRuntime = cpuRt;
     mTuneAttr = tune;

@@ -63,6 +63,7 @@ Session::Session(Schedule::ScheduleInfo&& info, const ModeGroup& mode, RuntimeIn
         mPipelines.emplace_back(std::move(newPipeline));
     }
     mCallBackMode = mode.callBackMode;
+    mMemoryUsageMode = mode.memoryUsageMode;
 }
 
 Session::~Session() {
@@ -195,18 +196,21 @@ ErrorCode Session::resize() {
                 return error;
             }
         }
-#ifdef LOG_VERBOSE
-        float memory = 0.0f;
-#endif
-        for (auto& iter : mRuntime.first) {
-            iter.second->onGabageCollect(0);
-#ifdef LOG_VERBOSE
-            memory += iter.second->onGetMemoryInMB();
-#endif
+
+        if(mMemoryUsageMode == Interpreter::Session_Memory_Collect) {
+            #ifdef LOG_VERBOSE
+            float memory = 0.0f;
+            #endif
+            for (auto& iter : mRuntime.first) {
+                iter.second->onGabageCollect(0);
+                #ifdef LOG_VERBOSE
+                memory += iter.second->onGetMemoryInMB();
+                #endif
+            }
+            #ifdef LOG_VERBOSE
+            FUNC_PRINT_ALL(memory, f);
+            #endif
         }
-#ifdef LOG_VERBOSE
-        FUNC_PRINT_ALL(memory, f);
-#endif
         mNeedMalloc = false;
         mNeedResize = false;
     }
@@ -262,7 +266,16 @@ bool Session::getInfo(Interpreter::SessionInfoCode code, void* ptr) const {
             } else {
                 *dst = 0;
             }
+            return true;
         } break;
+        case Interpreter::THREAD_NUMBER: {
+            auto dst = (int*)ptr;
+            if (mPipelines.empty()) {
+                break;
+            }
+            *dst = mPipelines[0]->getPipelineInfo().first.info.numThread;
+            return true;
+        }
         // TODO: Support other debug info
         default:
             break;
