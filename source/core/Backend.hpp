@@ -115,9 +115,7 @@ public:
     /**
      * @brief callback after resize ops.
      */
-    virtual ErrorCode onResizeEnd() {
-        return NO_ERROR;
-    }
+    virtual ErrorCode onResizeEnd() = 0;
 
     /**
      * @brief callback before executing ops.
