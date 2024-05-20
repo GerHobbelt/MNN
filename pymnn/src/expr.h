@@ -439,11 +439,6 @@ static void dealSlice(PyObject* slice, std::vector<int>& begin, std::vector<int>
             Py_ssize_t startl = 0, stopl = 0, stepl = 1;
             auto slice_res = PySlice_Unpack(item, &startl, &stopl, &stepl);
             // py2 don't check return value.
-#if PY_MAJOR_VERSION >= 3
-            if (!slice_res) {
-                PyMNN_ERROR_LOG("slice is invalid.");
-            }
-#endif
             int start = static_cast<int>(startl);
             int stop = static_cast<int>(stopl);
             int step = static_cast<int>(stepl);
@@ -1504,6 +1499,13 @@ static PyObject* PyMNNExpr_transpose(PyObject *self, PyObject *args) {
     }
     PyMNN_ERROR("transpose require args: (Var, [int]|Var)");
 }
+static PyObject* PyMNNExpr_reverse(PyObject *self, PyObject *args) {
+    PyObject *x, *y;
+    if (PyArg_ParseTuple(args, "OO", &x, &y) && isVar(x) && isVar(y)) {
+        return toPyObj(Express::_Reverse(toVar(x), toVar(y)));
+    }
+    PyMNN_ERROR("reverse require args: (Var, Var)");
+}
 static PyObject* PyMNNExpr_reverse_sequence(PyObject *self, PyObject *args) {
     PyObject *x, *y;
     int batchDim, seqDim;
@@ -1844,6 +1846,7 @@ static PyMethodDef PyMNNExpr_methods[] = {
     {"transpose",  PyMNNExpr_transpose, METH_VARARGS, "build transpose: (Var, [int]/Var)"},
     register_methods(Expr,
         channel_shuffle, "build channel_shuffle expr",
+        reverse, "build reverse expr",
         reverse_sequence, "build reverse_sequence expr",
         crop, "build crop expr",
         resize, "build resize expr",

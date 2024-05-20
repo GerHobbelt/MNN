@@ -18,6 +18,7 @@
 class Tokenizer {
 public:
     Tokenizer() = default;
+    virtual ~Tokenizer() = default;
     virtual bool load(const std::string& filename) = 0;
     virtual std::vector<int> encode(const std::string& str) = 0;
     virtual std::string decode(int id) = 0;
@@ -79,9 +80,8 @@ public:
     virtual std::vector<int> encode(const std::string& str) override;
     virtual std::string decode(int id) override;
 private:
+    std::unordered_map<std::string, int> encoder_;
     std::vector<std::string> decoder_;
-    std::vector<int> tokens_;
-    std::vector<int> token_ids_;
 };
 
 #endif // TOKENIZER_hpp
