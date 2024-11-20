@@ -212,7 +212,8 @@ ErrorCode StrassenMatrixComputor::_generateBasicMatMul(int e, int l, int h, cons
         MatrixInfo tempA = AT;
         MatrixInfo tempB = BT;
         tempA.offsetBytes = AT.offsetBytes + lS / core->pack * AT.lineStrideBytes;
-        tempB.offsetBytes = BT.offsetBytes + lS * hP * core->bytes;
+        // tempB.offsetBytes = BT.offsetBytes + lS * hP * core->bytes;
+        tempB.offsetBytes = BT.offsetBytes + lS * hP * mWeightBytes;
         auto code = _generateTrivalMatMul(e, lE-lS, h, tempA, tempB, CTemp, Empty, {});
         if (NO_ERROR != code) {
             return code;
@@ -298,7 +299,7 @@ ErrorCode StrassenMatrixComputor::_generateMatMul(int e, int l, int h, const Mat
     auto allocator = static_cast<CPUBackend*>(backend())->getBufferAllocator();
     currentDepth += 1;
     auto maxlH = std::max(lSub, hSub);
-    AutoMemory YAddr(hSub * lSub * core->bytes, allocator);
+    AutoMemory YAddr(hSub * lSub * mWeightBytes, allocator);
     AutoMemory XAddr(maxlH * eSub * core->bytes, allocator);
     if (XAddr.get().invalid() || YAddr.get().invalid()) {
         return OUT_OF_MEMORY;
@@ -307,7 +308,7 @@ ErrorCode StrassenMatrixComputor::_generateMatMul(int e, int l, int h, const Mat
     Y.stackIndex = (int)mStack.size();
     mStack.emplace_back(YAddr.get());
     Y.offsetBytes = 0;
-    Y.lineStrideBytes = lSub * core->bytes * hP;
+    Y.lineStrideBytes = lSub * mWeightBytes * hP;
     MatrixInfo X;
     X.stackIndex = (int)mStack.size();
     X.offsetBytes = 0;
@@ -331,9 +332,9 @@ ErrorCode StrassenMatrixComputor::_generateMatMul(int e, int l, int h, const Mat
     MatrixInfo b12 = BT;
     b12.offsetBytes = BT.offsetBytes + BT.lineStrideBytes * (hSub / hP);
     MatrixInfo b21 = BT;
-    b21.offsetBytes = BT.offsetBytes + lSub * hP * core->bytes;
+    b21.offsetBytes = BT.offsetBytes + lSub * hP * mWeightBytes;
     MatrixInfo b22 = BT;
-    b22.offsetBytes = BT.offsetBytes + BT.lineStrideBytes * (hSub / hP) + lSub * hP * core->bytes;
+    b22.offsetBytes = BT.offsetBytes + BT.lineStrideBytes * (hSub / hP) + lSub * hP * mWeightBytes;
     
     MatrixInfo c11 = CT;
     MatrixInfo c12 = CT;
@@ -499,6 +500,10 @@ void StrassenMatrixComputor::onReset() {
 
 ErrorCode StrassenMatrixComputor::onEncode(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs, const std::vector<float>& postParameters, int inputL, int inputH) {
     auto core = static_cast<CPUBackend*>(backend())->functions();
+    mWeightBytes = core->bytes;
+    if (mDequantBits == 8 || mDequantBits == 4) {
+        mWeightBytes = (float)mDequantBits / 8;
+    }
     MNN_ASSERT(inputs.size() == 2 || inputs.size() == 3);
     MNN_ASSERT(outputs.size() == 1);
     auto A  = inputs[0];
@@ -521,10 +526,10 @@ ErrorCode StrassenMatrixComputor::onEncode(const std::vector<Tensor*>& inputs, c
     MemChunk bias;
     bool useBias = false;
     if (inputs.size() > 2) {
-        bias = TensorUtils::getDescribe(inputs[2])->mem->chunk();
+        bias = TensorUtils::getDescribeOrigin(inputs[2])->mem->chunk();
         useBias = true;
     }
-    return onEncode(e, l, h, as, bs, cs, TensorUtils::getDescribe(A)->mem->chunk(), TensorUtils::getDescribe(B)->mem->chunk(), TensorUtils::getDescribe(C)->mem->chunk(), useBias, bias, postParameters);
+    return onEncode(e, l, h, as, bs, cs, TensorUtils::getDescribeOrigin(A)->mem->chunk(), TensorUtils::getDescribeOrigin(B)->mem->chunk(), TensorUtils::getDescribeOrigin(C)->mem->chunk(), useBias, bias, postParameters);
 }
 
 ErrorCode StrassenMatrixComputor::onEncode(int e, int l, int h, int as, int bs, int cs, const MemChunk AT, const MemChunk BT, MemChunk CT, bool useBias, const MemChunk Bias, const std::vector<float>& postParameters) {

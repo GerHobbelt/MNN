@@ -8,6 +8,9 @@ endif()
 
 if(CUDA_FOUND)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -D_FORCE_INLINES -Wno-deprecated-gpu-targets -w ${EXTRA_LIBS}")
+    if(MNN_SUPPORT_TRANSFORMER_FUSE)    
+        set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} --std=c++17") 
+    endif()
     if(CMAKE_BUILD_TYPE MATCHES Debug)
         set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O0")
     else()
@@ -55,7 +58,7 @@ if(CUDA_FOUND)
     # Limit minimum cuda version for each archs
 
     IF (${arch_count} EQUAL 1)
-        IF ((CUDA_ARCH_FLAGS_readable_code VERSION_GREATER "80") OR (CUDA_ARCH_FLAGS_readable_code VERSION_EQUAL "80"))
+        IF (MNN_SUPPORT_TRANSFORMER_FUSE OR (CUDA_ARCH_FLAGS_readable_code VERSION_GREATER "80") OR (CUDA_ARCH_FLAGS_readable_code VERSION_EQUAL "80"))
             IF (CUDA_VERSION VERSION_LESS "11.2")
                 message(FATAL_ERROR "Please update cuda version to 11.2 or higher!")
             ENDIF()
@@ -98,7 +101,25 @@ IF (MNN_CUDA_TUNE_PARAM)
     add_definitions(-DENABLE_CUDA_TUNE_PARAM)
 ENDIF()
 
+IF (MNN_LOW_MEMORY)
+    add_definitions(-DMNN_LOW_MEMORY)
+ENDIF()
+
 file(GLOB_RECURSE MNN_CUDA_SRC ${CMAKE_CURRENT_LIST_DIR}/core/* ${CMAKE_CURRENT_SOURCE_DIR}/execution/*)
+if(NOT MNN_SUPPORT_TRANSFORMER_FUSE)
+    file(GLOB_RECURSE MNN_CUDA_TRANSFORMER_FUSE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/execution/plugin/*)
+    list(REMOVE_ITEM MNN_CUDA_SRC ${MNN_CUDA_TRANSFORMER_FUSE_SRC})
+endif()
+
+if(NOT MNN_SUPPORT_RENDER)
+    file(GLOB_RECURSE MNN_CUDA_RENDER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/execution/render/*)
+    list(REMOVE_ITEM MNN_CUDA_SRC ${MNN_CUDA_RENDER_SRC})
+endif()
+
+if(NOT MNN_LOW_MEMORY)
+    file(GLOB_RECURSE MNN_CUDA_LOW_MEM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/execution/weight_only_quant/*)
+    list(REMOVE_ITEM MNN_CUDA_SRC ${MNN_CUDA_LOW_MEM_SRC})
+endif()
 message(STATUS "message ${CUDA_NVCC_FLAGS} !!!!!!!!!!! ${CUDA_INCLUDE_DIRS}")
 
 if(WIN32)
@@ -120,13 +141,20 @@ else()
     add_library(MNN_CUDA OBJECT Register.cpp)
 endif()
 
-
+if(MNN_SUPPORT_TRANSFORMER_FUSE)
 include_directories(
     ${CMAKE_CURRENT_LIST_DIR}/
     ${CUDA_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/include/
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../../3rd_party/cutlass/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../3rd_party/cutlass/v3_4_0/include    
 )
-
+else()
+include_directories(
+    ${CMAKE_CURRENT_LIST_DIR}/
+    ${CUDA_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/include/
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../3rd_party/cutlass/v2_9_0/include
+)
+endif()
 
 

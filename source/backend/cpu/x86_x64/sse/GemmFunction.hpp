@@ -213,7 +213,6 @@ static inline __m128 _load_int4x4(const uint8_t* src, __m128 alpha, __m128 bias)
     int iw2     = iw23 / 16;
     int iw3     = iw23 % 16;
     auto ws     = _mm_set_ps(iw3, iw2, iw1, iw0);
-    ws          = _mm_sub_ps(ws, _mm_set1_ps(8));
     ws          = _mm_add_ps(_mm_mul_ps(ws, alpha), bias);
     return ws;
 }
@@ -223,7 +222,8 @@ static void _SSE_MNNPackedMatMul_12_int4(float* C, const float* A, const float* 
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 0.5; // sizeof(int4_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     float ws_tmp[4];
@@ -288,7 +288,8 @@ static void _SSE_MNNPackedMatMul_8_int4(float* C, const float* A, const uint8_t*
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 0.5; // sizeof(int4_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     float ws_tmp[4];
@@ -342,7 +343,8 @@ static void _SSE_MNNPackedMatMul_4_int4(float* C, const float* A, const uint8_t*
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 0.5;
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     float ws_tmp[4];
@@ -390,7 +392,8 @@ static void _SSE_MNNPackednMatMulRemainCommon_int4(float* C, const float* A, con
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 0.5; // sizeof(int4_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes); // parameter[5]/weightBytes
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     auto es           = eSize;
@@ -441,7 +444,8 @@ static void _SSE_MNNPackedMatMul_12_int8(float* C, const float* A, const float* 
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 1; // sizeof(int8_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     float ws_tmp[4];
@@ -506,7 +510,8 @@ static void _SSE_MNNPackedMatMul_8_int8(float* C, const float* A, const int8_t* 
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 1; // sizeof(int8_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     float ws_tmp[4];
@@ -560,7 +565,8 @@ static void _SSE_MNNPackedMatMul_4_int8(float* C, const float* A, const int8_t* 
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 1; // sizeof(int8_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     float ws_tmp[4];
@@ -608,7 +614,8 @@ static void _SSE_MNNPackednMatMulRemainCommon_int8(float* C, const float* A, con
     auto h            = parameter[2];
     auto l            = parameter[1];
     auto cStride      = parameter[3] / sizeof(float);
-    auto bExtraStride = parameter[5] / sizeof(float);
+    float weightBytes = 1; // sizeof(int8_t)
+    auto bExtraStride = static_cast<int32_t>(parameter[5] / weightBytes);
     auto bStride      = bExtraStride + l * 4;
     auto hC4          = UP_DIV(h, 4);
     auto es           = eSize;

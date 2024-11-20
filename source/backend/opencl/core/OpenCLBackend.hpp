@@ -36,7 +36,7 @@ namespace OpenCL {
 struct TuneInfo;
 class CLRuntime : public Runtime {
 public:
-    CLRuntime(const Backend::Info& info, int platformSize, int platformId, int deviceId = 0);
+    CLRuntime(const Backend::Info& info, int platformSize, int platformId, int deviceId = 0, void *contextPtr = nullptr, void *glshared = nullptr);
     virtual ~CLRuntime();
 
     virtual Backend* onCreate(const BackendConfig* config) const override;
@@ -50,8 +50,8 @@ public:
                            const MNN::Op* op, OpInfo& dstInfo) const override;
     virtual void onMaskOpReady(const std::vector<Tensor*>& inputs, const std::vector<Tensor*>& outputs,
                                const MNN::Op* op) override;
-    void convertToDevice(const Tensor* srcTensor, const Tensor* dstTensor, MNN_DATA_FORMAT data_format, bool svmFlag = false) const;
-    void convertFromDevice(const Tensor* srcTensor, const Tensor* dstTensor, MNN_DATA_FORMAT data_format, bool svmFlag = false) const;
+    void convertToDevice(const Tensor* srcTensor, const Tensor* dstTensor, MNN_DATA_FORMAT data_format, bool svmFlag = false, int memtype = MNN_FORWARD_CPU) const;
+    void convertFromDevice(const Tensor* srcTensor, const Tensor* dstTensor, MNN_DATA_FORMAT data_format, bool svmFlag = false, int memtype = MNN_FORWARD_CPU) const;
     void copyBetweenDevice(const Tensor* srcTensor, const Tensor* dstTensor) const;
 
 private:
@@ -65,30 +65,6 @@ private:
 
     friend class OpenCLBackend;
     TuneInfo* mTunedInfo;
-    cl::Kernel mImageToNCHWBufferFloat;
-    cl::Kernel mImageToNC4HW4BufferFloat;
-    cl::Kernel mImageToNHWCBufferFloat;
-    cl::Kernel mNC4HW4BufferToImageFloat;
-    cl::Kernel mNCHWBufferToImageFloat;
-    cl::Kernel mNHWCBufferToImageFloat;
-    cl::Kernel mNHWCBufferToImageInt8;
-
-    cl::Kernel mNC4HW4BufferToNCHWBufferOut;
-    cl::Kernel mNC4HW4BufferToNHWCBufferOut;
-    cl::Kernel mNC4HW4BufferToNC4HW4BufferOut;
-    cl::Kernel mNC4HW4BufferToNC4HW4BufferInp;
-    cl::Kernel mNCHWBufferToNC4HW4BufferInp;
-    cl::Kernel mNHWCBufferToNC4HW4BufferInp;
-    cl::Kernel mNC4HW4BufferToNC4HW4Buffer;
-
-#ifdef MNN_SUPPORT_INTEL_SUBGROUP
-    cl::Kernel mNCHWBufferToNC16HW16BufferInp;
-    cl::Kernel mNHWCBufferToNC16HW16BufferInp;
-    cl::Kernel mNC4HW4BufferToNC16HW16BufferInp;
-    cl::Kernel mNC16HW16BufferToNHWCBufferOut;
-    cl::Kernel mNC16HW16BufferToNCHWBufferOut;
-    cl::Kernel mNC16HW16BufferToNC4HW4BufferOut;
-#endif
 };
 
 
@@ -123,8 +99,9 @@ public:
     static bool addCreator(std::pair<OpType, GpuMemObject> t, Creator *c);
 
     BufferPool *getBufferPool() const {
-        return mBufferPool.get();
+        return mBufferPool;
     }
+    virtual bool onSelectDynamicAllocator(int index, int maxIndex) override;
 
     BackendConfig::PrecisionMode getPrecision() const {
         return mPrecision;
@@ -151,8 +128,8 @@ public:
     void addRecord(cl_recording_qcom &record){
         mRecordings.emplace_back(record);
     }
-    void recordKernel2d(const ::cl::Kernel &kernel, const std::vector<uint32_t> &gws, const std::vector<uint32_t> &lws);
-    void recordKernel3d(const ::cl::Kernel &kernel, const std::vector<uint32_t> &gws, const std::vector<uint32_t> &lws);
+    void recordKernel2d(const std::shared_ptr<KernelWrap> &kernel, const std::vector<uint32_t> &gws, const std::vector<uint32_t> &lws);
+    void recordKernel3d(const std::shared_ptr<KernelWrap> &kernel, const std::vector<uint32_t> &gws, const std::vector<uint32_t> &lws);
     void startRecord(cl_recording_qcom &recording);
     void endRecord(cl_recording_qcom &recording, bool flag = false);
 
@@ -165,19 +142,28 @@ private:
     void copyToDevice(const Tensor* srcTensor, const Tensor* dstTensor) const;
     void copyFromDeviceInt8(const Tensor* srcTensor, const Tensor* dstTensor) const;
     void copyToDeviceInt8(const Tensor* srcTensor, const Tensor* dstTensor) const;
+    void copyBetweenDevice(const Tensor* srcTensor, const Tensor* dstTensor) const;
 
-    void _allocHostBuffer(int length) const;
+    void _allocHostBuffer(int length, const Tensor* srcTensor) const;
 
     const CLRuntime* mCLRuntime;
 
-    std::shared_ptr<ImagePool> mImagePool;
-    std::shared_ptr<BufferPool> mBufferPool;
+    std::shared_ptr<ImagePool> mImagePoolSecond;
+    std::shared_ptr<BufferPool> mBufferPoolSecond;
+
+    ImagePool* mImagePool;
+    BufferPool* mBufferPool;
+
+    std::shared_ptr<ImagePool> mImagePoolFirst;
+    std::shared_ptr<BufferPool> mBufferPoolFirst;
     std::shared_ptr<ImagePool> mStaticImagePool;
     std::shared_ptr<BufferPool> mStaticBufferPool;
     
     std::shared_ptr<OpenCLRuntime> mOpenCLRuntime;
 
     mutable std::pair<int, std::shared_ptr<cl::Buffer>> mHostBuffer;
+    mutable cl::Buffer *mDeviceBuffer = nullptr;
+    mutable std::shared_ptr<cl::Image> mDeviceTexture;
     BackendConfig::PrecisionMode mPrecision;
     BackendConfig::MemoryMode mMemory;
     bool mIsCreateError{false};
