@@ -1,6 +1,8 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <MNN/AutoTime.hpp>
+#include <MNN/expr/ExecutorScope.hpp>
 #define DUMP_NUM_DATA(type)                          \
     auto data = tensor->host<type>();                \
     for (int z = 0; z < outside; ++z) {              \
@@ -125,7 +127,7 @@ static void _initDebug() {
         }
         return true;
     };
-    MNN::Express::Executor::getGlobalExecutor()->setCallBack(std::move(beforeCallBack), std::move(callBack));
+    MNN::Express::ExecutorScope::Current()->setCallBack(std::move(beforeCallBack), std::move(callBack));
 }
 
 
@@ -170,7 +172,7 @@ static void _initTimeTrace() {
         gTimeTraceInfo->end(info);
         return true;
     };
-    MNN::Express::Executor::getGlobalExecutor()->setCallBack(std::move(beforeCallBack), std::move(callBack));
+    MNN::Express::ExecutorScope::Current()->setCallBack(std::move(beforeCallBack), std::move(callBack));
 }
 
 template<typename T>
@@ -240,7 +242,7 @@ static void _initTensorStatic() {
                 continue;
             }
             auto data = res.second;
-            MNN_PRINT("%s [Input] %s_%d, Max: %f, Min: %f, Avg: %f, [", info->type().c_str(), opName.c_str(), i, std::get<0>(data), std::get<1>(data), std::get<2>(data));
+            MNN_PRINT("%s [Input] %s_%d, type:%d-%d, Max: %f, Min: %f, Avg: %f, [", info->type().c_str(), opName.c_str(), i,  ntensor->getType().code, ntensor->getType().bits, std::get<0>(data), std::get<1>(data), std::get<2>(data));
             for (int v=0; v<ntensor->dimensions(); ++v) {
                 MNN_PRINT("%d", ntensor->length(v));
                 if (v!=ntensor->dimensions()-1) {
@@ -263,7 +265,7 @@ static void _initTensorStatic() {
                 continue;
             }
             auto data = res.second;
-            MNN_PRINT("%s [Output] %s_%d, Max: %f, Min: %f, Avg: %f, [", info->type().c_str(), opName.c_str(), i, std::get<0>(data), std::get<1>(data), std::get<2>(data));
+            MNN_PRINT("%s [Output] %s_%d, type:%d-%d, Max: %f, Min: %f, Avg: %f, [", info->type().c_str(), opName.c_str(), i,  ntensor->getType().code, ntensor->getType().bits, std::get<0>(data), std::get<1>(data), std::get<2>(data));
             for (int v=0; v<ntensor->dimensions(); ++v) {
                 MNN_PRINT("%d", ntensor->length(v));
                 if (v!=ntensor->dimensions()-1) {
@@ -274,5 +276,5 @@ static void _initTensorStatic() {
         }
         return true;
     };
-    MNN::Express::Executor::getGlobalExecutor()->setCallBack(std::move(beforeCallBack), std::move(callBack));
+    MNN::Express::ExecutorScope::Current()->setCallBack(std::move(beforeCallBack), std::move(callBack));
 }

@@ -41,7 +41,7 @@ static bool _supportQuant(const Op* op, const std::vector<Tensor*>& inputs, cons
         case OpType_ConvInt8:
         case OpType_DepthwiseConvInt8:
             return true;
-        // case OpType_Eltwise:
+            // case OpType_Eltwise:
         case OpType_Raster:
         {
             for (auto input : inputs) {
@@ -69,7 +69,7 @@ static bool _supportQuant(const Op* op, const std::vector<Tensor*>& inputs, cons
             } else {
                 return false;
             }
-       case OpType_BinaryOp:
+        case OpType_BinaryOp:
             return true;
         case OpType_Softmax:
             return true;
@@ -80,7 +80,11 @@ static bool _supportQuant(const Op* op, const std::vector<Tensor*>& inputs, cons
         case OpType_LayerNorm:
             return true;
         case OpType_UnaryOp:
-            return true;
+            if (op->main_as_UnaryOp()->tableInt8() || op->main_as_UnaryOp()->opType() == UnaryOpOperation_NEG || op->main_as_UnaryOp()->opType() == UnaryOpOperation_ABS || op->main_as_UnaryOp()->opType() == UnaryOpOperation_SIGN) {
+                return true;
+            } else {
+                return false;
+            }
         case OpType_PReLU:
             return true;
         default:
@@ -205,9 +209,9 @@ void Pipeline::UnitInfo::setUp(const Command& command, int index, const Op* orig
 #endif
 }
 
-Pipeline::Pipeline(const std::string& externalFile, Schedule::PipelineInfo&& info, bool allocInput, bool outputStatic, const TuningAttr& tune, const Runtime* rt, const Runtime* cpuRt)
+Pipeline::Pipeline(const std::string& externalFile, Schedule::PipelineInfo&& info, bool allocInput, bool outputStatic, const TuningAttr& tune, const Runtime* rt, const Runtime* cpuRt, int geometryMask)
 #ifndef MNN_BUILD_MINI
-    : mContext(info.first.cache.second, info.first.cache.first->type(), info.first.info.user ? info.first.info.user->precision :  BackendConfig::Precision_Normal), mUseGeometry(rt->onGetCompilerType()) {
+    : mContext(geometryMask, info.first.cache.second, info.first.cache.first->type(), info.first.info.user ? info.first.info.user->precision :  BackendConfig::Precision_Normal), mUseGeometry(rt->onGetCompilerType()) {
 #else
 {
 #endif

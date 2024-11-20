@@ -144,36 +144,11 @@ Interpreter* Interpreter::createFromBufferInternal(Content* net, bool enforceAut
 }
 
 void Interpreter::setSessionHint(HintMode mode, int hint) {
-    switch (mode) {
-        case MAX_TUNING_NUMBER:
-            mNet->modes.maxTuningNumber = hint;
-            break;
-        case MEM_ALLOCATOR_TYPE:
-            mNet->modes.memoryAllocatorType = hint;
-            break;
-        case WINOGRAD_MEMORY_LEVEL:
-            mNet->modes.winogradMemoryUsed = hint;
-        default:
-            break;
-    }
+    mNet->modes.setHint(mode, hint);
 }
 
 void Interpreter::setSessionMode(SessionMode mode) {
-    if (mode == Session_Input_Inside || mode == Session_Input_User) {
-        mNet->modes.inputMode = mode;
-    } else if (mode == Session_Output_User || mode == Session_Output_Inside) {
-        mNet->modes.outputMode = mode;
-    } else if (mode == Session_Backend_Auto || mode == Session_Backend_Fix) {
-        mNet->modes.backendMode = mode;
-    } else if (mode == Session_Debug || mode == Session_Release) {
-        mNet->modes.callBackMode = mode;
-    } else if (mode == Session_Resize_Direct || mode == Session_Resize_Defer) {
-        mNet->modes.resizeMode = mode;
-    } else if(mode == Session_Memory_Collect || mode == Session_Memory_Cache) {
-        mNet->modes.memoryUsageMode = mode;
-    } else if(mode == Session_Codegen_Disable || mode == Session_Codegen_Enable) {
-        mNet->modes.codegenMode = mode;
-    } else if (mode == Session_Resize_Check) {
+    if (mode == Session_Resize_Check) {
         for (auto& iter : mNet->sessions) {
             iter->openResizeCheck();
         }
@@ -181,6 +156,8 @@ void Interpreter::setSessionMode(SessionMode mode) {
         for (auto& iter : mNet->sessions) {
             iter->fixResizeCache();
         }
+    } else {
+        mNet->modes.setMode(mode);
     }
 }
 
@@ -244,7 +221,7 @@ Interpreter::Interpreter(Content* net) {
     mNet->bizCode = std::string(mNet->net->bizCode() ? mNet->net->bizCode()->c_str() : "");
     mNet->uuid = std::string(mNet->net->mnn_uuid() ? mNet->net->mnn_uuid()->c_str() : "");
 #ifdef MNN_INTERNAL_ENABLED
-    mNet->basicLogginData = getBasicLoggingData();
+    mNet->basicLogginData = logBasicInfo();
     mNet->basicLogginData.emplace("ModelVersion", getModelVersion());
 #endif
 }
@@ -261,8 +238,6 @@ Interpreter::~Interpreter() {
 
 Session* Interpreter::createMultiPathSession(const std::vector<ScheduleConfig>& configs) {
     RuntimeInfo runtime = createRuntime(configs);
-    runtime.second->setAllocatorType(mNet->modes.memoryAllocatorType);
-    runtime.second->setWinogradMemoryLevel(mNet->modes.winogradMemoryUsed);
     if (runtime.first.empty()) {
         MNN_ERROR("Runtime not valid for create session\n");
         return nullptr;
@@ -271,6 +246,11 @@ Session* Interpreter::createMultiPathSession(const std::vector<ScheduleConfig>& 
 }
 
 Session* Interpreter::createMultiPathSession(const std::vector<ScheduleConfig>& configs, const RuntimeInfo& runtime) {
+    for (auto& iter : runtime.first) {
+        iter.second->setRuntimeHint(mNet->modes.runtimeHint);
+    }
+    runtime.second->setRuntimeHint(mNet->modes.runtimeHint);
+
     if (nullptr == mNet->buffer.get()) {
         MNN_ERROR("The model buffer has been released. Can't create session\n");
         return nullptr;
@@ -288,6 +268,10 @@ Session* Interpreter::createMultiPathSession(const std::vector<ScheduleConfig>& 
     info.externalWeightPath = mNet->externalFile;
     auto success = Schedule::schedule(info, mNet->net, configs, runtime);
     if (!success) {
+        return nullptr;
+    }
+    if (info.needInputContentForShape) {
+        MNN_ERROR("Interpreter don't support case for shape compute need input content, please use module api instead\n");
         return nullptr;
     }
     RuntimeInfo rt = runtime;
