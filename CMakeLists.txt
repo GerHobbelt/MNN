@@ -20,7 +20,9 @@ endif()
 project(MNN VERSION ${MNN_VERSION} LANGUAGES C CXX ASM)
 # complier options
 set(CMAKE_C_STANDARD 99)
-set(CMAKE_CXX_STANDARD 11)
+IF (NOT (CMAKE_CXX_STANDARD EQUAL 17))
+  set(CMAKE_CXX_STANDARD 11)
+ENDIF()
 set(CMAKE_MODULE_PATH
   ${CMAKE_MODULE_PATH}
   "${CMAKE_CURRENT_LIST_DIR}/cmake"
@@ -284,7 +286,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "^Android")
 endif()
 option(MNN_USE_CPP11 "Enable MNN use c++11" ON)
 if (NOT MSVC)
-    if(MNN_CUDA AND MNN_SUPPORT_TRANSFORMER_FUSE)
+    if((MNN_CUDA AND MNN_SUPPORT_TRANSFORMER_FUSE) OR (CMAKE_CXX_STANDARD EQUAL 17))
         set(CMAKE_CXX_STANDARD 17)
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
@@ -379,8 +381,21 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}/include/
                     ${CMAKE_CURRENT_LIST_DIR}/3rd_party/imageHelper
                     ${CMAKE_CURRENT_LIST_DIR}/3rd_party/OpenCLHeaders/
                   )
+list(APPEND MNN_INCLUDES
+        ${CMAKE_CURRENT_LIST_DIR}/include/
+        ${CMAKE_CURRENT_LIST_DIR}/source/
+        ${CMAKE_CURRENT_LIST_DIR}/express/
+        ${CMAKE_CURRENT_LIST_DIR}/tools/
+        ${CMAKE_CURRENT_LIST_DIR}/codegen/
+        ${CMAKE_CURRENT_LIST_DIR}/schema/current/
+        ${CMAKE_CURRENT_LIST_DIR}/3rd_party/
+        ${CMAKE_CURRENT_LIST_DIR}/3rd_party/flatbuffers/include
+        ${CMAKE_CURRENT_LIST_DIR}/3rd_party/half
+        ${CMAKE_CURRENT_LIST_DIR}/3rd_party/imageHelper
+        ${CMAKE_CURRENT_LIST_DIR}/3rd_party/OpenCLHeaders/
+)
 
-
+include_directories(${MNN_INCLUDES})
 set(MNN_OBJECTS_TO_LINK "")
 set(MNN_TARGETS "")
 
@@ -682,15 +697,21 @@ ENDIF()
 
 # NPU
 IF(MNN_NPU)
+    if (CMAKE_SYSTEM_NAME MATCHES "^Android")
+        set(HIAI_PATH ${ANDROID_ABI})
+    endif()
+    if (OHOS)
+        set(HIAI_PATH ${OHOS_ARCH})
+    endif()
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/)
     IF(MNN_SEP_BUILD)
         list(APPEND MNN_DEPS MNN_NPU)
     ELSE()
         list(APPEND MNN_TARGETS MNN_NPU)
         list(APPEND MNN_OBJECTS_TO_LINK $<TARGET_OBJECTS:MNN_NPU>)
-        list(APPEND MNN_EXTRA_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/3rdParty/${ANDROID_ABI}/libhiai.so)
-        list(APPEND MNN_EXTRA_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/3rdParty/${ANDROID_ABI}/libhiai_ir_build.so)
-        list(APPEND MNN_EXTRA_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/3rdParty/${ANDROID_ABI}/libhiai_ir.so)
+        list(APPEND MNN_EXTRA_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/3rdParty/${HIAI_PATH}/libhiai.so)
+        list(APPEND MNN_EXTRA_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/3rdParty/${HIAI_PATH}/libhiai_ir_build.so)
+        list(APPEND MNN_EXTRA_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/source/backend/hiai/3rdParty/${HIAI_PATH}/libhiai_ir.so)
     ENDIF()
 ENDIF()
 
@@ -798,7 +819,6 @@ IF(MNN_BUILD_AUDIO AND NOT MNN_SEP_BUILD)
   IF(MSVC)
     target_compile_definitions(MNNAudio PRIVATE "-DBUILDING_MNN_DLL" INTERFACE "-DUSING_MNN_DLL")
   ENDIF()
-  message(STATUC "### build MNNAudio into MNN")
   target_sources(MNN PRIVATE $<TARGET_OBJECTS:MNNAudio>)
 ENDIF()
 

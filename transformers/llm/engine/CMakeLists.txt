@@ -1,15 +1,19 @@
+cmake_minimum_required(VERSION 3.6)
+project(llm)
 option(LLM_SUPPORT_VISION "Llm model support vision input." OFF)
 option(LLM_SUPPORT_AUDIO "Llm model support audio input." OFF)
 option(BUILD_MLS "Build PC Commandline." OFF)
 
-
+set(LLM_DEPS ${MNN_DEPS})
 if (LLM_SUPPORT_VISION AND MNN_BUILD_OPENCV)
-    include_directories(${CMAKE_SOURCE_DIR}/tools/cv/include/)
+    add_definitions(-DLLM_SUPPORT_VISION)
+    list(APPEND LLM_DEPS MNNOpenCV)
+    include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../tools/cv/include/)
 endif()
 
 if (LLM_SUPPORT_AUDIO AND MNN_BUILD_AUDIO)
-    list(APPEND MNN_DEPS MNNAudio)
-    include_directories(${CMAKE_SOURCE_DIR}/tools/audio/include/)
+    list(APPEND LLM_DEPS MNNAudio)
+    include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../tools/audio/include/)
 endif()
 
 # include dir
@@ -23,11 +27,11 @@ if (MNN_SEP_BUILD)
         # compile dynamic so, support Linux/Mac
         add_library(llm SHARED ${SRCS})
         set_target_properties(llm PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
-        target_link_libraries(llm ${MNN_DEPS})
+        target_link_libraries(llm ${LLM_DEPS})
     else()
         add_library(llm STATIC ${SRCS})
     endif()
-    list(APPEND MNN_DEPS llm)
+    list(APPEND LLM_DEPS llm)
 else()
     add_library(llm OBJECT ${SRCS})
 endif()
@@ -39,18 +43,16 @@ if (LLM_SUPPORT_AUDIO AND MNN_BUILD_AUDIO)
     target_compile_definitions(llm PRIVATE LLM_SUPPORT_AUDIO)
 endif()
 
-add_executable(llm_demo ${CMAKE_CURRENT_LIST_DIR}/llm_demo.cpp)
-target_link_libraries(llm_demo ${MNN_DEPS})
-add_executable(embedding_demo ${CMAKE_CURRENT_LIST_DIR}/embedding_demo.cpp)
-
-
-target_link_libraries(embedding_demo ${MNN_DEPS})
-add_executable(audio_demo ${CMAKE_CURRENT_LIST_DIR}/audio_demo.cpp)
-target_link_libraries(audio_demo ${MNN_DEPS})
-add_executable(rollback_demo ${CMAKE_CURRENT_LIST_DIR}/rollback_demo.cpp)
-target_link_libraries(rollback_demo ${MNN_DEPS})
+add_executable(llm_demo ${CMAKE_CURRENT_LIST_DIR}/demo/llm_demo.cpp)
+add_executable(embedding_demo ${CMAKE_CURRENT_LIST_DIR}/demo/embedding_demo.cpp)
+add_executable(rollback_demo ${CMAKE_CURRENT_LIST_DIR}/demo/rollback_demo.cpp)
+target_link_libraries(llm_demo ${LLM_DEPS})
+target_link_libraries(embedding_demo ${LLM_DEPS})
+target_link_libraries(rollback_demo ${LLM_DEPS})
 
 if (BUILD_MLS)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS version" FORCE)
+
 add_executable(mls
         ${CMAKE_CURRENT_LIST_DIR}/app/mls.cpp
         ${CMAKE_CURRENT_LIST_DIR}/app/remote_model_downloader.cpp
@@ -64,13 +66,13 @@ add_executable(mls
 # set(OPENSSL_CRYPTO_LIBRARY "C:/Program Files/OpenSSL-Win64/lib/VC/x64/MD/libcrypto.lib")
 # set(OPENSSL_LIBRARIES "C:/Program Files/OpenSSL-Win64/lib//VC/x64/MD/libssl.lib;C:/Program Files/OpenSSL-Win64/lib/VC/x64/MD/libcrypto.lib")
 # Set OpenSSL_FOUND based on the presence of include directory and libraries
+set(OPENSSL_USE_STATIC_LIBS TRUE)
 message(STATUS "OPENSSL_INCLUDE_DIR: ${OPENSSL_INCLUDE_DIR} OPENSSL_LIBRARIES:${OPENSSL_LIBRARIES}")
 if(OPENSSL_LIBRARIES AND OPENSSL_INCLUDE_DIR)
     set(OpenSSL_FOUND TRUE)
 else()
     set(OpenSSL_FOUND FALSE)
 endif()
-
 # Check if OPENSSL_LIBRARIES is not set to find OpenSSL
 if(NOT OpenSSL_FOUND)
     find_package(OpenSSL REQUIRED)
@@ -79,18 +81,18 @@ endif()
 # Check if OpenSSL is found
 if(OpenSSL_FOUND)
     message(STATUS "OpenSSL found: ${OPENSSL_INCLUDE_DIR} ${OPENSSL_LIBRARIES}")
-    
+
     # Use the OpenSSL include directory
     target_include_directories(mls PRIVATE ${OPENSSL_INCLUDE_DIR})
 
     # Link to OpenSSL libraries
-    target_link_libraries(mls ${OPENSSL_LIBRARIES})
+    target_link_libraries(mls PRIVATE ${OPENSSL_LIBRARIES})
 
     # If on Apple platform, link with Security framework
     if(APPLE)
         find_library(SECURITY_FRAMEWORK Security)
         if(SECURITY_FRAMEWORK)
-            target_link_libraries(mls ${SECURITY_FRAMEWORK})
+            target_link_libraries(mls PRIVATE ${SECURITY_FRAMEWORK})
         else()
             message(FATAL_ERROR "Could not find Security framework")
         endif()
@@ -98,9 +100,11 @@ if(OpenSSL_FOUND)
 else()
     message(FATAL_ERROR "OpenSSL not found. Please install OpenSSL and set paths.")
 endif()
+
+target_include_directories(mls PRIVATE ${MNN_INCLUDES} ${CMAKE_CURRENT_LIST_DIR}/src/)
 set_property(TARGET mls PROPERTY CXX_STANDARD 17)
 set_property(TARGET mls PROPERTY CXX_STANDARD_REQUIRED ON)
 # target_compile_options(mls PRIVATE -std=c++17)
-target_link_libraries(mls ${MNN_DEPS})
+target_link_libraries(mls PRIVATE ${LLM_DEPS})
 target_compile_definitions(mls PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
 endif()

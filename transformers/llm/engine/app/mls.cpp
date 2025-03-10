@@ -23,9 +23,13 @@ static void tuning_prepare(Llm *llm) {
     MNN_PRINT("Prepare for tuning opt End\n");
 }
 
-static std::unique_ptr<Llm> create_and_prepare_llm(const char *config_path) {
+static std::unique_ptr<Llm> create_and_prepare_llm(const char *config_path, bool use_template) {
     std::unique_ptr<Llm> llm(Llm::createLLM(config_path));
-    llm->set_config("{\"tmp_path\":\"tmp\"}");
+    if (use_template) {
+        llm->set_config("{\"tmp_path\":\"tmp\"}");
+    } else {
+        llm->set_config("{\"tmp_path\":\"tmp\",\"use_template\":false}");
+    }
     {
         AUTOTIME;
         llm->load();
@@ -81,11 +85,11 @@ static int eval_prompts(Llm *llm, const std::vector<std::string> &prompts) {
             continue;
         }
         llm->response(prompt);
-        auto status = llm->getState();
-        prompt_len += status.prompt_len_;
-        decode_len += status.gen_seq_len_;
-        prefill_time += status.prefill_us_;
-        decode_time += status.decode_us_;
+        auto context = llm->getContext();
+        prompt_len += context->prompt_len;
+        decode_len += context->gen_seq_len;
+        prefill_time += context->prefill_us;
+        decode_time += context->decode_us;
     }
     float vision_s = vision_time / 1e6;
     float audio_s = audio_time / 1e6;
@@ -152,6 +156,12 @@ static int list_models(int argc, const char *argv[]) {
     return 0;
 }
 
+static bool IsR1(const std::string& path) {
+    std::string lowerModelName = path;
+    std::transform(lowerModelName.begin(), lowerModelName.end(), lowerModelName.begin(), ::tolower);
+    return lowerModelName.find("deepseek-r1") != std::string::npos;
+}
+
 static int serve(int argc, const char *argv[]) {
     bool invalid_param{false};
     std::string config_path{};
@@ -175,8 +185,9 @@ static int serve(int argc, const char *argv[]) {
         }
     }
     mls::MlsServer server;
-    auto llm = create_and_prepare_llm(config_path.c_str());
-    server.Start(llm.get());
+    bool is_r1 = IsR1(config_path);
+    auto llm = create_and_prepare_llm(config_path.c_str(), !is_r1);
+    server.Start(llm.get(), is_r1);
     return 0;
 }
 
@@ -219,10 +230,35 @@ static int benchmark(int argc, const char *argv[]) {
         print_usage();
         exit(1);
     }
-    auto llm = create_and_prepare_llm(config_path.c_str());
+    auto llm = create_and_prepare_llm(config_path.c_str(), true);
     mls::LLMBenchmark benchmark;
     benchmark.Start(llm.get(), {});
     return 0;
+}
+
+
+void chat(Llm* llm) {
+    ChatMessages messages;
+    messages.emplace_back("system", "You are a helpful assistant.");
+    auto context = llm->getContext();
+    while (true) {
+        std::cout << "\nUser: ";
+        std::string user_str;
+        std::getline(std::cin, user_str);
+        if (user_str == "/exit") {
+            return;
+        }
+        if (user_str == "/reset") {
+            llm->reset();
+            std::cout << "\nA: reset done." << std::endl;
+            continue;
+        }
+        messages.emplace_back("user", user_str);
+        std::cout << "\nA: " << std::flush;
+        llm->response(messages);
+        auto assistant_str = context->generate_str;
+        messages.emplace_back("assistant", assistant_str);
+    }
 }
 
 static int run(int argc, const char *argv[]) {
@@ -300,7 +336,7 @@ static int run(int argc, const char *argv[]) {
     }
     if (prompt.empty() && prompt_file.empty())
     {
-        llm->chat();
+        chat(llm.get());
     }
     else if (!prompt.empty())
     {
@@ -376,6 +412,10 @@ int delete_model(int argc, const char *argv[]) {
 }
 
 int main(int argc, const char *argv[]) {
+    if (argc < 2) {
+        print_usage();
+        return 0;
+    }
     std::string cmd = argv[1];
     if (cmd == "list") {
         list_models(argc, argv);

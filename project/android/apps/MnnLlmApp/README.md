@@ -1,13 +1,15 @@
 # MNN-LLM Android App
+**The App has been renamed "MNN Chat" and the home page has been moved to [Here](../../../../apps/Android/MnnLlmChat/README.md)**
+
 [中文版本](./README_CN.md)
 ## Introduction
 This is our full multimodal language model (LLM) Android app
 
 <p align="center">
-  <img width="20%" alt="Icon"  src="./assets/image_home.jpg" style="margin: 0 10px;">
-  <img width="20%" alt="Icon" src="./assets/image_diffusion.jpg" style="margin: 0 10px;">
-  <img width="20%" alt="Icon" src="./assets/image_sound.jpg" style="margin: 0 10px;">
-  <img width="20%" alt="Icon" src="./assets/image_image.jpg" style="margin: 0 10px;">
+  <img width="20%" alt="Icon"  src="../../../../apps/Android/MnnLlmChat/assets/image_home.jpg" style="margin: 0 10px;">
+  <img width="20%" alt="Icon" src="../../../../apps/Android/MnnLlmChat/assets/image_diffusion.jpg" style="margin: 0 10px;">
+  <img width="20%" alt="Icon" src="../../../../apps/Android/MnnLlmChat/assets/image_sound.jpg" style="margin: 0 10px;">
+  <img width="20%" alt="Icon" src="../../../../apps/Android/MnnLlmChat/assets/image_image.jpg" style="margin: 0 10px;">
 </p>
 
 
@@ -33,28 +35,12 @@ This is our full multimodal language model (LLM) Android app
  !!!warning!!! This version has been tested exclusively on the OnePlus 13 and Xiaomi 14 Ultra, Due to the demanding performance requirements of large language models (LLMs), many budget or low-spec devices may experience issues such as slow inference speeds, application instability, or even failure to run entirely. and its stability on other devices cannot be guaranteed. If you encounter any issues, please feel free to open an issue for assistance.
 
 
-# Development 
-+ Clone the repository:
-  ```shell
-    git clone https://github.com/alibaba/MNN.git
-  ```
-+ Build library:
-  ```shell
-  cd project/android
-  mkdir build_64
-  ../build_64.sh "-DMNN_LOW_MEMORY=true -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true -DMNN_BUILD_LLM=true -DMNN_SUPPORT_TRANSFORMER_FUSE=true -DMNN_ARM82=true -DMNN_USE_LOGCAT=true -DMNN_OPENCL=true -DLLM_SUPPORT_VISION=true -DMNN_BUILD_OPENCV=true -DMNN_IMGCODECS=true -DLLM_SUPPORT_AUDIO=true -DMNN_BUILD_AUDIO=true -DMNN_BUILD_DIFFUSION=ON -DMNN_SEP_BUILD=ON"
-  ```
-+ copy to llm android app project
-  ```shell
-  find . -name "*.so" -exec cp {} ../apps/MnnLlmApp/app/src/main/jniLibs/arm64-v8a/  \;
-  ```
-+ build android app project and install
-  ```shell
-  cd ../apps/MnnLlmApp/
-  ./gradlew installDebug
-  ```
-
 # Releases
+## Version 0.2.2
++ Click here to [download](https://meta.alicdn.com/data/mnn/mnn_chat_d_0_2_2.apk)
++ Support mmap for speed up laoding speed.
++ Add version update checker
+
 ## Version 0.2.1
 + Click here to [download](https://meta.alicdn.com/data/mnn/mnn_chat_d_0_2_1_1.apk)
 + Support for ModelScope downloads
@@ -63,6 +49,7 @@ This is our full multimodal language model (LLM) Android app
 <p align="center">
   <img width="20%" alt="Icon"  src="./assets/deepseek_support.gif" style="margin: 0 10px;">
 </p>
+
 ## Version 0.2
 + Click here to [download](https://meta.alicdn.com/data/mnn/mnn_llm_app_debug_0_2_0.apk)
 + Optimized for DeepSeek R1 1.5B
