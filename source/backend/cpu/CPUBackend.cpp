@@ -19,6 +19,7 @@
 #include "CPUCast.hpp"
 #include "core/OpCommonUtils.hpp"
 #include "core/WrapExecution.hpp"
+#include "core/MNNFileUtils.h"
 #ifdef _OPENMP
 #include <omp.h>
 #endif // _OPENMP
@@ -194,6 +195,7 @@ CPURuntime::CPURuntime(const Backend::Info& info) {
     MNN_PRINT("create CPURuntime:%p\n", this);
 #endif
 }
+
 CPURuntime:: ~ CPURuntime() {
 #ifdef MNN_USE_THREAD_POOL
     ThreadPool::releaseWorkIndex(mTaskIndex);
@@ -223,18 +225,31 @@ Backend* CPURuntime::onCreate(const BackendConfig* config, Backend* origin) cons
         if (mDynamicMmap.empty()) {
             // Only support set featuremap dir once
             mDynamicMmap.resize(2);
-            auto mmapMem = BufferAllocator::Allocator::createMmap(hint().midMemoryPath.c_str(), "dynamic");
+            auto mmapMem = BufferAllocator::Allocator::createMmap(hint().midMemoryPath.c_str(), "", "dynamic");
             for (auto& buf : mDynamicMmap) {
                 buf.root = mmapMem;
             }
         }
     }
     if (hint().weightMemoryPath.size() > 0) {
+        // forward_type, precision_type, memory_type, power_type
+        std::string prefix = "0_0_0_0_";
+        prefix[2] += mPrecision;
+        prefix[4] += mMemory;
+        prefix[6] += mPower;
+        // prefix += hint().modelUUID + "_";
+        bool autoRemove = true;
+        if (hint().useCachedMmap) {
+            autoRemove = false;
+            std::string fileName = MNNFilePathConcat(hint().weightMemoryPath, prefix + "sync.static");
+            const_cast<RuntimeHint&>(hint()).useCachedMmap += MNNFileExist(fileName.c_str());
+        }
         if (nullptr == mStaticAllocatorCache.get()) {
             // Only support set weightmap dir once
             mStaticAllocatorCache = mStaticAllocator;
-            auto mmapMem = BufferAllocator::Allocator::createMmap(hint().weightMemoryPath.c_str(), "static");
-            mStaticAllocator.reset(new EagerBufferAllocator(mmapMem, 32, 1024 * 1024 * 1024));
+            auto mmapMem = BufferAllocator::Allocator::createMmap(hint().weightMemoryPath.c_str(), prefix.c_str(), "static", autoRemove);
+            size_t mmapSize = static_cast<size_t>(hint().mmapFileSize) * 1024 * 1024;
+            mStaticAllocator.reset(new EagerBufferAllocator(mmapMem, 32, mmapSize));
         }
     }
     auto precision = mPrecision;
@@ -430,9 +445,12 @@ CPUBackend::~CPUBackend() {
     mCacheGroup.clear();
 }
 void CPUBackend::_resetDynamicMemory() const {
-    mDmaInfo->mDynamicAllocator->apply();
+    mRuntime->pCurrentStatus = mDmaInfo->mDynamicAllocator->apply();
+    if (NO_ERROR != mRuntime->pCurrentStatus) {
+        return;
+    }
     if (nullptr != mDmaInfo->mDynamicAllocatorBackup.get()) {
-        mDmaInfo->mDynamicAllocatorBackup->apply();
+        mRuntime->pCurrentStatus  = mDmaInfo->mDynamicAllocatorBackup->apply();
     }
 }
 
@@ -551,7 +569,7 @@ static OpType _getRealOpType(OpType opType) {
             return OpType_DepthwiseConvInt8;
         case OpType_Pooling:
             return OpType_PoolInt8;
-        
+
         // case OpType_Eltwise:
         //     // TODO: just support EltwiseAdd
         //     return OpType_EltwiseInt8;
@@ -645,8 +663,8 @@ Execution* CPUBackend::onCreate(const std::vector<Tensor*>& inputs, const std::v
     // TODO: rm this convert when merge diff datatyoe of op
     auto map  = gCreator;
     auto iter = map->find(opType);
-    if (iter == map->end()) {
-        MNN_PRINT("Don't support type [%s], %s\n", MNN::EnumNameOpType(op->type()), op->name()->c_str());
+    if (iter == map->end() ) {
+        MNN_PRINT("Don't support type [%s]\n", MNN::EnumNameOpType(op->type()));
         return nullptr;
     }
     Execution* exe = nullptr;
@@ -662,6 +680,7 @@ const Runtime* CPUBackend::getRuntime() {
 
 bool CPUBackend::onClearBuffer() {
     if (nullptr != mRuntime->mStaticAllocatorCache.get()) {
+        mStaticAllocator->sync();
         mStaticAllocator = mRuntime->mStaticAllocatorCache;
     }
     mCache->reset();

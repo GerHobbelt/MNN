@@ -66,25 +66,25 @@ OpenCLRuntime::OpenCLRuntime(const BackendConfig::PrecisionMode precision, const
             const std::string deviceName    = mFirstGPUDevicePtr->getInfo<CL_DEVICE_NAME>();
             mDeviceName = deviceName;
             const std::string deviceVersion = mFirstGPUDevicePtr->getInfo<CL_DEVICE_VERSION>();
-            std::map<std::string, MNN::MaliAr> maliArMap {
-                {"Mali-T860", MIDGARD},
-                {"Mali-T880", MIDGARD},
-                {"Mali-G31", BIFROST},
-                {"Mali-G51", BIFROST},
-                {"Mali-G52", BIFROST},
-                {"Mali-G71", BIFROST},
-                {"Mali-G72", BIFROST},
-                {"Mali-G76", BIFROST},
-                {"Mali-G57", VALHALL},
-                {"Mali-G68", VALHALL},
-                {"Mali-G77", VALHALL},
-                {"Mali-G78", VALHALL},
-                {"Mali-G310", VALHALL},
-                {"Mali-G510", VALHALL},
-                {"Mali-G610", VALHALL},
-                {"Mali-G615", VALHALL},
-                {"Mali-G710", VALHALL},
-                {"Mali-G715", VALHALL},
+            std::map<std::string, std::pair<MNN::MaliAr, MNN::GpuLevel>> maliArMap {
+                {"Mali-T860", {MIDGARD, LOW}},
+                {"Mali-T880", {MIDGARD, LOW}},
+                {"Mali-G31", {BIFROST, LOW}},
+                {"Mali-G51", {BIFROST, LOW}},
+                {"Mali-G52", {BIFROST, LOW}},
+                {"Mali-G71", {BIFROST, LOW}},
+                {"Mali-G72", {BIFROST, LOW}},
+                {"Mali-G76", {BIFROST, MEDIUM}},
+                {"Mali-G57", {VALHALL, LOW}},
+                {"Mali-G68", {VALHALL, LOW}},
+                {"Mali-G77", {VALHALL, MEDIUM}},
+                {"Mali-G78", {VALHALL, MEDIUM}},
+                {"Mali-G310", {VALHALL, LOW}},
+                {"Mali-G510", {VALHALL, LOW}},
+                {"Mali-G610", {VALHALL, LOW}},
+                {"Mali-G615", {VALHALL, LOW}},
+                {"Mali-G710", {VALHALL, TOP}},
+                {"Mali-G715", {VALHALL, TOP}},
             };
         
             const std::string deviceVendor  = mFirstGPUDevicePtr->getInfo<CL_DEVICE_VENDOR>();
@@ -125,16 +125,22 @@ OpenCLRuntime::OpenCLRuntime(const BackendConfig::PrecisionMode precision, const
                 // if device is QUALCOMM's and version is 2.0 , set spacial optimized param
                 //if Adreno version is less than Adreno512, donot set WorkGroupAttribute option
                 std::string adrenoVersion = deviceVersion.substr(deviceVersion.size()-3);
-                //printf("Adreno Version:%s\n", adrenoVersion.c_str());
+                // MNN_PRINT("Adreno Version:%s   %s\n", deviceVersion.c_str(), adrenoVersion.c_str());
                 if(mCLVersion > 1.99f && adrenoVersion >= "512") {
                     isSetWorkGroupAttribute = true;
+                }
+                // 8Gen1 and after
+                if(adrenoVersion >= "730") {
+                    mGpuLevel = TOP;
                 }
             } else if (deviceName.find("Mali") != std::string::npos) {
                 mGpuType = MALI;
                 if(maliArMap.find(deviceName) != maliArMap.end()){
-                    mMaliAr = maliArMap[deviceName];
+                    mMaliAr = maliArMap[deviceName].first;
+                    mGpuLevel = maliArMap[deviceName].second;
                 }else{
                     mMaliAr = VALHALL;
+                    mGpuLevel = UNDEFINED;
                 }
             } else if (deviceVendor.find("Advanced Micro Devices") != std::string::npos) {
                 // Radeon series GPU is main product of Advanced Micro Devices (AMD)
@@ -184,8 +190,12 @@ OpenCLRuntime::OpenCLRuntime(const BackendConfig::PrecisionMode precision, const
                     // Do nothing
                 });
             }else{
-                context_properties.push_back(0);
-                mContext = std::shared_ptr<cl::Context>(new cl::Context(std::vector<cl::Device>({*mFirstGPUDevicePtr}), context_properties.data(), nullptr, nullptr, &res));
+                if(context_properties.size() > 0){
+                    context_properties.push_back(0);
+                    mContext = std::shared_ptr<cl::Context>(new cl::Context(std::vector<cl::Device>({*mFirstGPUDevicePtr}), context_properties.data(), nullptr, nullptr, &res));
+                }else{
+                    mContext = std::shared_ptr<cl::Context>(new cl::Context(std::vector<cl::Device>({*mFirstGPUDevicePtr}), nullptr, nullptr, nullptr, &res));
+                }
             }
             MNN_CHECK_CL_SUCCESS(res, "context");
             if (res != CL_SUCCESS) {
@@ -233,11 +243,6 @@ OpenCLRuntime::OpenCLRuntime(const BackendConfig::PrecisionMode precision, const
             mFirstGPUDevicePtr->getInfo(CL_DEVICE_MAX_MEM_ALLOC_SIZE, &mMaxMemAllocSize);
             mFirstGPUDevicePtr->getInfo(CL_DEVICE_LOCAL_MEM_SIZE, &mMaxLocalMemSize);
             mMaxWorkGroupSize = mFirstGPUDevicePtr->getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
-            cl_device_fp_config fpConfig;
-            auto success = mFirstGPUDevicePtr->getInfo(CL_DEVICE_HALF_FP_CONFIG, &fpConfig);
-            mIsDeviceSupportedFP16     = CL_SUCCESS == success && fpConfig > 0;
-            bool checkFp16Exetension = getDeviceSupportsExtension(*(mFirstGPUDevicePtr.get()), "cl_khr_fp16");
-            mIsDeviceSupportedFP16 = (mIsDeviceSupportedFP16 && checkFp16Exetension);
             
             //set gpu mode, tuning level and memory object
             setGpuMode(cl_mode);
@@ -249,18 +254,8 @@ OpenCLRuntime::OpenCLRuntime(const BackendConfig::PrecisionMode precision, const
                     mMemType = IMAGE;
                 }
             }
-            mPrecisionLevel = 1;
-            if (mIsDeviceSupportedFP16) {
-                if (precision == BackendConfig::Precision_Low) {
-                    mPrecisionLevel = 2;
-                } else if (precision == BackendConfig::Precision_Normal && mMemType == BUFFER) {
-                    mPrecisionLevel = 0;
-                }
-            }
+            setPrecision(precision);
             
-            // Is supported fp16 IO storage
-            mIsSupportedFP16 = (mPrecisionLevel == 2 || mPrecisionLevel == 0);
-
             if(getDeviceSupportsExtension(*(mFirstGPUDevicePtr.get()), "cl_arm_integer_dot_product_int8")){
                 mSupportDotInt8 = true;
             }
@@ -298,7 +293,10 @@ OpenCLRuntime::OpenCLRuntime(const BackendConfig::PrecisionMode precision, const
         mIsCreateError = true;
         MNN_ASSERT(platforms.size() > 0);
     }
-    {
+    if (mIsCreateError) {
+        return;
+    }
+    if (mMemType == IMAGE){
         // Init info
         size_t max_height, max_width;
         res = mFirstGPUDevicePtr->getInfo(CL_DEVICE_IMAGE2D_MAX_HEIGHT, &max_height);
@@ -508,6 +506,25 @@ uint32_t OpenCLRuntime::maxFreq() const {
 
 uint64_t OpenCLRuntime::maxAllocSize() const {
     return mMaxMemAllocSize;
+}
+
+void OpenCLRuntime::setPrecision(const BackendConfig::PrecisionMode precision){
+    cl_device_fp_config fpConfig;
+    auto success = mFirstGPUDevicePtr->getInfo(CL_DEVICE_HALF_FP_CONFIG, &fpConfig);
+    mIsDeviceSupportedFP16     = CL_SUCCESS == success && fpConfig > 0;
+    bool checkFp16Exetension = getDeviceSupportsExtension(*(mFirstGPUDevicePtr.get()), "cl_khr_fp16");
+    mIsDeviceSupportedFP16 = (mIsDeviceSupportedFP16 && checkFp16Exetension);
+    mPrecisionLevel = 1;
+    if (mIsDeviceSupportedFP16) {
+        if (precision == BackendConfig::Precision_Low) {
+            mPrecisionLevel = 2;
+        } else if (precision == BackendConfig::Precision_Normal && mMemType == BUFFER) {
+            mPrecisionLevel = 0;
+        }
+    }
+    
+    // Is supported fp16 IO storage
+    mIsSupportedFP16 = (mPrecisionLevel == 2 || mPrecisionLevel == 0);
 }
 
 bool OpenCLRuntime::loadProgram(const std::string &programName, cl::Program *program) {

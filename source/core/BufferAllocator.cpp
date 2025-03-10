@@ -67,16 +67,22 @@ class MmapAllocator : public BufferAllocator::Allocator {
 private:
     std::map<void*, std::tuple<file_t,size_t, std::string>> mCache;
     std::string mFileName;
+    std::string mPrefix;
     std::string mPosfix;
     int mAllocTimes = 0;
     bool mRemove;
+    bool mNewMmap = false;
+
 public:
-    MmapAllocator(const char* dirName, const char* posfix, bool autoRemove) {
+    MmapAllocator(const char* dirName, const char* prefix, const char* posfix, bool autoRemove) {
         if (nullptr != dirName) {
             mFileName = dirName;
-            if (!MNNDirExist(dirName)) {
+            if (!MNNCreateDir(dirName)) {
                 MNN_ERROR("%s not exist\n", dirName);
             }
+        }
+        if (nullptr != prefix) {
+            mPrefix = prefix;
         }
         if (nullptr != posfix) {
             mPosfix = posfix;
@@ -94,16 +100,26 @@ public:
     }
     virtual MemChunk onAlloc(size_t size, size_t align) {
         MNN_ASSERT(size > 0);
-        std::string fileName = MNNFilePathConcat(mFileName, std::to_string(mAllocTimes) + "." + mPosfix);
-        auto file = MNNCreateFile(fileName.c_str());
-        size = UP_DIV(size, align) * align;
-        MNNSetFileSize(file, size);
+        std::string name = mPrefix + std::to_string(mAllocTimes) + "." + mPosfix;
+        std::string fileName = MNNFilePathConcat(mFileName, name);
+        file_t file;
+        if (MNNFileExist(fileName.c_str())) {
+            file = MNNOpenFile(fileName.c_str(), MNN_FILE_READ | MNN_FILE_WRITE);
+        } else {
+            file = MNNCreateFile(fileName.c_str());
+            size = UP_DIV(size, align) * align;
+            auto code = MNNSetFileSize(file, size);
+            if (NO_ERROR != code) {
+                MNN_ERROR("Set File size %lu error= %d\n", size, code);
+            }
+            mNewMmap = true;
+        }
         void* ptr = MNNMmapFile(file, size);
         mCache.insert(std::make_pair(ptr, std::make_tuple(file, size, fileName)));
         mAllocTimes++;
         return MemChunk(ptr, 0);
     }
-    virtual void onRelease(MemChunk chunk) {
+    virtual void onRelease(MemChunk chunk) override {
         MNN_ASSERT(chunk.second == 0);
         auto iter = mCache.find(chunk.first);
         if (iter == mCache.end()) {
@@ -117,6 +133,17 @@ public:
             MNNRemoveFile(std::get<2>(iter->second).c_str());
         }
         mCache.erase(iter);
+        mAllocTimes = 0;
+    }
+    virtual void sync() override {
+        if (!mRemove && mNewMmap) {
+            for (auto& iter : mCache) {
+                MNNMmapSync(iter.first, std::get<1>(iter.second));
+            }
+            std::string cacheName = mPrefix + "sync." + mPosfix;
+            std::string fileName = MNNFilePathConcat(mFileName, cacheName);
+            MNNCreateFile(fileName.c_str());
+        }
     }
 };
 class RecurseAllocator : public BufferAllocator::Allocator {
@@ -142,9 +169,9 @@ std::shared_ptr<BufferAllocator::Allocator> BufferAllocator::Allocator::createDe
     _res.reset(new DefaultAllocator);
     return _res;
 }
-std::shared_ptr<BufferAllocator::Allocator> BufferAllocator::Allocator::createMmap(const char* dirName, const char* posfix, bool autoRemove) {
+std::shared_ptr<BufferAllocator::Allocator> BufferAllocator::Allocator::createMmap(const char* dirName, const char* prefix, const char* posfix, bool autoRemove) {
     std::shared_ptr<BufferAllocator::Allocator> _res;
-    _res.reset(new MmapAllocator(dirName, posfix, autoRemove));
+    _res.reset(new MmapAllocator(dirName, prefix, posfix, autoRemove));
     return _res;
 }
 
@@ -325,6 +352,10 @@ void EagerBufferAllocator::beginGroup() {
 
 void EagerBufferAllocator::endGroup() {
     mCurrentFreeList = nullptr;
+}
+
+void EagerBufferAllocator::sync() {
+    mAllocator->sync();
 }
 
 std::pair<void*, size_t> EagerBufferAllocator::getFromFreeList(FREELIST* list, size_t size, bool permiteSplit, size_t align) {

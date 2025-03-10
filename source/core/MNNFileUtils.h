@@ -56,6 +56,14 @@ MNN_PUBLIC std::string MNNFilePathConcat(std::string prefix, std::string suffix)
 MNN_PUBLIC bool MNNDirExist(const char * path);
 
 /*=============================================================================================
+**  @brief      Create a directory if not exists
+**  @param      path -- path of the directory
+**  @return     If the directory exists or create success, returns true
+**              If the directory does not exist and create fail, return false
+*/
+MNN_PUBLIC bool MNNCreateDir(const char * path);
+
+/*=============================================================================================
 **  @brief      Check whether a file exists
 **  @param      file_name -- path of the file
 **  @return     If the file exists, returns true
@@ -178,5 +186,16 @@ MNN_PUBLIC void * MNNMmapFile(file_t file, size_t size);
 **              and the size is correct
 */
 MNN_PUBLIC ErrorCode MNNUnmapFile(void * addr, size_t size);
+
+/*=============================================================================================
+**  @brief      Sync mmap memory to disk.
+**  @param      addr -- start address of the mapped space
+**              size -- mapped length
+**  @return     If succeeded, returns NO_ERROR
+**              If failed, returns FAILED
+**  @warning    Make sure that this space was mapped by the MNNMmapFile() before
+**              and the size is correct
+*/
+MNN_PUBLIC ErrorCode MNNMmapSync(void * addr, size_t size);
 
 #endif // MNN_FileUtils_H

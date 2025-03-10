@@ -36,6 +36,7 @@ struct ConvBufResource {
     bool mConv1x1Opt = false;
     bool mConv1x1C8Opt = false;
     bool mConv1x1Local = false;
+    float mCoef = 1.0f;
     /*
      0 -> not use
      1 -> use small tile
@@ -76,7 +77,7 @@ private:
     std::vector<int> mPaddings{0, 0};
     std::vector<uint32_t> mGlobalWorkSize{1, 1, 1};
     std::vector<uint32_t> mLocalWorkSize{1, 1, 1, 1};
-    std::shared_ptr<KernelWrap> mKernel;
+    std::vector<std::shared_ptr<KernelWrap>> mKernel;
     std::shared_ptr<Tensor> mConvGemmInpTensor;
     std::shared_ptr<Tensor> mConvGemmOutTensor;
     std::shared_ptr<KernelWrap> mPreKernel = nullptr;
