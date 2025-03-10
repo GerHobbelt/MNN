@@ -287,6 +287,11 @@ bool Cli::initializeMNNConvertArgs(modelConfig &modelPath, int argc, char **argv
      cxxopts::value<bool>()
      )
     (
+     "useGeluApproximation",
+     "Use Gelu Approximation Compute Instead of use ERF",
+     cxxopts::value<int>()
+     )
+    (
      "convertMatmulToConv",
      "if 1, converter matmul with constant input to convolution. default: 1, range: {0, 1}",
      cxxopts::value<int>()
@@ -478,7 +483,9 @@ bool Cli::initializeMNNConvertArgs(modelConfig &modelPath, int argc, char **argv
     if (result.count("convertMatmulToConv")) {
         modelPath.convertMatmulToConv = result["convertMatmulToConv"].as<int>();
     }
-
+    if (result.count("useGeluApproximation")) {
+        modelPath.useGeluApproximation = result["useGeluApproximation"].as<int>();
+    }
     if (result.count("testdir")) {
         modelPath.testDir = result["testdir"].as<std::string>();
     }
@@ -705,9 +712,19 @@ bool Cli::convertModel(modelConfig& modelPath) {
             }
         }
     }
-    if (modelPath.model != modelConfig::MNN || modelPath.optimizeLevel >= 2) {
+    bool needOptimize = modelPath.model != modelConfig::MNN || modelPath.optimizeLevel >= 1;
+    if (modelPath.saveStaticModel) {
+        needOptimize = false;
+    }
+    std::vector<std::string> expectedPass;
+    if (1 == modelPath.optimizeLevel && modelPath.model == modelConfig::MNN) {
+        expectedPass = {
+            "FuseDupOp"
+        };
+    }
+    if (needOptimize) {
         std::cout << "Start to Optimize the MNN Net..." << std::endl;
-        std::unique_ptr<MNN::NetT> newNet = optimizeNet(netT, modelPath.forTraining, modelPath);
+        std::unique_ptr<MNN::NetT> newNet = optimizeNet(netT, modelPath.forTraining, modelPath, expectedPass);
         if (newNet->extraTensorDescribe.size()>0) {
             MNN_PRINT("MNN net has tensor quant info\n");
             computeUnaryBuffer(newNet.get());
@@ -783,6 +800,14 @@ static bool compareOutput(MNN::Express::VARP output, const std::string& directNa
     absMax = MNN::Express::_Maximum(absMax, MNN::Express::_Scalar<float>(0.0001f));
     auto diff = MNN::Express::_Abs(targetValue - output);
     auto outputPtr = output->readMap<float>();
+#define MNN_IS_INF(x) (fabs(x) == INFINITY)
+#define MNN_IS_NAN(x) ((x) != (x))
+    for (int i=0; i<info->size; ++i) {
+        if (MNN_IS_INF(outputPtr[i]) || MNN_IS_NAN(outputPtr[i])) {
+            MNN_ERROR("TESTERROR %s value error:%f\n", name.c_str(), outputPtr[i]);
+            return false;
+        }
+    }
     auto diffAbsMax = MNN::Express::_ReduceMax(diff);
     auto absMaxV = absMax->readMap<float>()[0];
     auto diffAbsMaxV = diffAbsMax->readMap<float>()[0];
@@ -1387,14 +1412,17 @@ bool CommonKit::json2protobuf(const char* jsonFile, const char* protoFile, MNN::
     auto algos = pipelineInfo["algo"].GetArray();
     for (auto iter = algos.begin(); iter != algos.end(); ++iter) {
         auto algoInfo = iter->GetObject();
+        MNN_ASSERT(algoInfo["type"].GetInt() == 0);
         auto compressionType = (MNN::Compression::CompressionAlgo_CompressionType)algoInfo["type"].GetInt();
-        std::unique_ptr<MNN::Compression::QuantizeParams> quant_params(new MNN::Compression::QuantizeParams());
         auto quantParamsInfo = algoInfo["quant_params"].GetObject();
         auto round_mode = quantParamsInfo["round_mode"].GetInt();
+        MNN::Compression::CompressionAlgo* algo = pipeline->add_algo();
+        algo->set_type(compressionType);
+        auto quant_params = algo->mutable_quant_params();
         quant_params->set_round_mode((MNN::Compression::QuantizeParams_RoundMode)round_mode);
 
-        auto layer = quantParamsInfo["layer"].GetArray();
-        for (auto ly = layer.begin(); ly != layer.end(); ++ly) {
+        auto layers = quantParamsInfo["layer"].GetArray();
+        for (auto ly = layers.begin(); ly != layers.end(); ++ly) {
             auto layerInfo = ly->GetObject();
             auto newLayer = quant_params->add_layer();
             if (layerInfo.HasMember("method")) {
@@ -1425,7 +1453,6 @@ bool CommonKit::json2protobuf(const char* jsonFile, const char* protoFile, MNN::
             // Input.
             auto inputs_ = layerInfo["input"].GetArray();
             for (auto w = inputs_.begin(); w != inputs_.end(); ++w) {
-                // Get weight info.
                 int bits = w->GetObject()["bits"].GetInt();
                 auto name = w->GetObject()["name"].GetString();
                 auto scale = w->GetObject()["scales"].GetArray();
@@ -1446,7 +1473,6 @@ bool CommonKit::json2protobuf(const char* jsonFile, const char* protoFile, MNN::
             // Output.
             auto outputs_ = layerInfo["output"].GetArray();
             for (auto w = outputs_.begin(); w != outputs_.end(); ++w) {
-                // Get weight info.
                 int bits = w->GetObject()["bits"].GetInt();
                 auto name = w->GetObject()["name"].GetString();
                 auto scale = w->GetObject()["scales"].GetArray();
@@ -1464,10 +1490,6 @@ bool CommonKit::json2protobuf(const char* jsonFile, const char* protoFile, MNN::
                 }
             }
         }
-        MNN::Compression::CompressionAlgo* algo = pipeline->add_algo();
-        algo->set_type(compressionType);
-        auto params = algo->quant_params();
-        params.CopyFrom(*quant_params.get());
     }
     // Write protobuf.bin
     if (protoFile) {

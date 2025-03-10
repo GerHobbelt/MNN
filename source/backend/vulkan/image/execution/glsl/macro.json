@@ -59,7 +59,8 @@
         "LOG1P",
         "ROUND",
         "HARDSWISH",
-        "GELU"
+        "GELU",
+        "SILU"
     ],
     "unPackImage4x4.comp":[
         "TRANSPOSE"
@@ -91,6 +92,10 @@
         "RELU",
         "RELU6"
     ],
+    "convolutionDepthwise_s1d1_w2.comp":[
+        "RELU",
+        "RELU6"
+    ],
     "deconvolutionDepthwise.comp":[
         "RELU",
         "RELU6"
@@ -117,5 +122,11 @@
         "VMAX",
         "VMIN",
         "SQUDIFF"
+    ],
+    "softmaxImage.comp":[
+        "AXIS_N",
+        "AXIS_H",
+        "AXIS_W",
+        "AXIS_C"
     ]
 }

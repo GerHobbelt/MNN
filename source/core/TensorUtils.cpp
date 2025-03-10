@@ -487,7 +487,7 @@ static bool _ClipDst(int* stride, int srcOffset, int dstOffset, const int* srcSi
      dx=sx-xo -> [max(0, -xo), max(0, min(sxr-xo, dxr))]
      dy,dz compute the same
      **/
-    
+
     int offsetBias = dstOffset - srcOffset;
     if (sizeNum == 0) {
         // All stride is zero, then size will be all one
@@ -798,8 +798,30 @@ TensorUtils::FuseWrap::~ FuseWrap() {
 bool TensorUtils::FuseWrap::match(const Tensor::InsideDescribe::Region& srcReg, const Tensor::InsideDescribe::Region& dstReg) {
     return mStatus->match(srcReg, dstReg);
 }
+#ifdef MNN_DEBUG_BLIT
+static std::string _printRegion(const Tensor::InsideDescribe::Region& reg) {
+    char info[2048];
+    sprintf(info, "size: %d, %d, %d; src: %d, %d, %d, %d; dst: %d, %d, %d, %d", reg.size[0], reg.size[1], reg.size[2], reg.src.offset, reg.src.stride[0], reg.src.stride[1], reg.src.stride[2], reg.dst.offset, reg.dst.stride[0], reg.dst.stride[1], reg.dst.stride[2]);
+    info[2047] = 0;
+    return std::string(info);
+}
+#endif
+
 void TensorUtils::FuseWrap::apply(const Tensor::InsideDescribe::Region& srcReg, Tensor::InsideDescribe::Region& dstReg) {
+#ifdef MNN_DEBUG_BLIT
+    {
+        auto src = _printRegion(srcReg);
+        auto dst = _printRegion(dstReg);
+        MNN_PRINT("Fuse:\n %s \n %s\n To: \n", src.c_str(), dst.c_str());
+    }
+#endif
     mStatus->apply(srcReg, dstReg);
+#ifdef MNN_DEBUG_BLIT
+    {
+        auto dst = _printRegion(dstReg);
+        MNN_PRINT("%s\n", dst.c_str());
+    }
+#endif
 }
 
 void TensorUtils::adjustTensorForCompability(Tensor* newTensor) {
@@ -879,6 +901,16 @@ void TensorUtils::setTensorPad(const Tensor* tensor, int left, int right, int bo
     srcDes->mPads.right = std::max(srcDes->mPads.right, right);
     srcDes->mPads.bottom = std::max(srcDes->mPads.bottom, bottom);
     srcDes->mPads.top = std::max(srcDes->mPads.top, top);
+}
+
+void TensorUtils::setSharedMem(const Tensor *tensor, Backend::MemObj *mem){
+    auto srcDes = TensorUtils::getDescribe(tensor);
+    srcDes->mSharedMem = mem;
+}
+
+Backend::MemObj* TensorUtils::getSharedMem(const Tensor* tensor){
+    auto srcDes = TensorUtils::getDescribe(tensor);
+    return srcDes->mSharedMem.get();
 }
 
 } // namespace MNN

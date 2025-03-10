@@ -42,6 +42,7 @@ extern void ___Convolution3DSizeComputer__OpType_Convolution3D__();
 extern void ___ConcatSizeComputer__OpType_Concat__();
 extern void ___ConcatSizeComputer__OpType_QuantizedConcat__();
 extern void ___CastSizeComputer__OpType_Cast__();
+extern void ___CastSizeComputer__OpType_CastLike__();
 extern void ___CastSizeComputer__OpType_FloatToInt8__();
 extern void ___CastSizeComputer__OpType_Int8ToFloat__();
 extern void ___BatchToSpaceNDSizeComputer__OpType_BatchToSpaceND__();
@@ -121,6 +122,9 @@ extern void ___FmhaV2SizeComputer__OpType_FmhaV2__();
 extern void ___FmhcaSizeComputer__OpType_Fmhca__();
 extern void ___AttentionSizeComputer__OpType_Attention__();
 #endif
+#ifdef MNN_BUILD_AUDIO
+extern void ___StftOpComputer__OpType_Stft__();
+#endif
 void registerShapeOps() {
 ___ShapeSizeComputer__OpType_Shape__();
 ___ShapeRasterComputer__OpType_Raster__();
@@ -164,6 +168,7 @@ ___Convolution3DSizeComputer__OpType_Convolution3D__();
 ___ConcatSizeComputer__OpType_Concat__();
 ___ConcatSizeComputer__OpType_QuantizedConcat__();
 ___CastSizeComputer__OpType_Cast__();
+___CastSizeComputer__OpType_CastLike__();
 ___CastSizeComputer__OpType_FloatToInt8__();
 ___CastSizeComputer__OpType_Int8ToFloat__();
 ___BatchToSpaceNDSizeComputer__OpType_BatchToSpaceND__();
@@ -241,6 +246,9 @@ ___SeqLen2SpatialSizeComputer__OpType_SeqLen2Spatial__();
 ___FmhaV2SizeComputer__OpType_FmhaV2__();
 ___FmhcaSizeComputer__OpType_Fmhca__();
 ___AttentionSizeComputer__OpType_Attention__();
+#endif
+#ifdef MNN_BUILD_AUDIO
+___StftOpComputer__OpType_Stft__();
 #endif
 }
 }

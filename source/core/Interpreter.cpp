@@ -193,6 +193,9 @@ void Interpreter::setExternalFile(const char* file, size_t flag) {
 }
 
 ErrorCode Interpreter::updateCacheFile(Session *session, int flag) {
+    if (mNet->cacheFile.empty()) {
+        return NOT_SUPPORT;
+    }
     std::lock_guard<std::mutex> _l(mNet->lock);
 
     // Backend_Auto and no Async work, then don't need updateCache
@@ -226,6 +229,9 @@ Interpreter::Interpreter(Content* net) {
 }
 
 Interpreter::~Interpreter() {
+    for (auto iter = mNet->sessions.begin(); iter != mNet->sessions.end(); iter++) {
+        updateCacheFile((*iter).get());
+    }
     {
         // If the session is running, we must not delete session
         std::unique_lock<std::mutex> _l(mNet->lock);

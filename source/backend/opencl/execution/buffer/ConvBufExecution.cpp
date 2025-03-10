@@ -204,7 +204,7 @@ ConvBufExecution::ConvBufExecution(const std::vector<Tensor *> &inputs, const st
             }
             mOpenCLBackend->getOpenCLRuntime()->commandQueue().enqueueUnmapMemObject(filterBufferCL, ptrCL);
 
-            mResource->mFilter.reset(Tensor::createDevice<float>({1, filterImageShape[1], 1, 4 * filterImageShape[0]}));
+            mResource->mFilter.reset(Tensor::createDevice<float>({filterImageShape[1] * 4 * filterImageShape[0]}));
             mOpenCLBackend->onAcquireBuffer(mResource->mFilter.get(), Backend::STATIC);
             MNN::OpenCL::BufferConvertor bufferConvertor{mOpenCLBackend->getOpenCLRuntime()};
 
@@ -458,8 +458,8 @@ ErrorCode ConvBufExecution::onResize(const std::vector<Tensor *> &inputs, const 
             std::pair<int, int> min_cost(INT_MAX, 0);//(min_time, min_index)
             for(int knl_idx = 0; knl_idx < actual_kernel; knl_idx++) {
                 std::set<std::string> buildOption = mResource->mBuildOptions;
-                if(outputShape.at(3) % itemC[knl_idx] != 0){
-                    buildOption.emplace("-DCHANNEL_LEAVE");
+                if(itemC[knl_idx] == 8 && outputShape.at(3) % itemC[knl_idx] > 0 && outputShape.at(3) % itemC[knl_idx] <= 4){
+                    buildOption.emplace("-DCHANNEL_BOUNDARY_PROTECT");
                 }
                 if((outputShape.at(2) % itemW[knl_idx]) != 0){
                     buildOption.emplace("-DBLOCK_LEAVE");
@@ -496,13 +496,12 @@ ErrorCode ConvBufExecution::onResize(const std::vector<Tensor *> &inputs, const 
                 }
             }
 
-            std::shared_ptr<ConvolutionCommon::Int8Common> quanCommon;
             int min_index  = min_cost.second;
             mGlobalWorkSize = {globalWorkSize[min_index][0], globalWorkSize[min_index][1]};
 
             std::set<std::string> buildOption = mResource->mBuildOptions;
-            if(outputShape.at(3) % itemC[min_index] != 0){
-                buildOption.emplace("-DCHANNEL_LEAVE");
+            if(itemC[min_index] == 8 && outputShape.at(3) % itemC[min_index] > 0 && outputShape.at(3) % itemC[min_index] <= 4){
+                buildOption.emplace("-DCHANNEL_BOUNDARY_PROTECT");
             }
             if((outputShape.at(2) % itemW[min_index]) != 0){
                 buildOption.emplace("-DBLOCK_LEAVE");
@@ -801,6 +800,7 @@ public:
         }
 
         if (ConvBufWinograd::valid(conv2D->common(), inputs[0], outputs[0], static_cast<OpenCLBackend *>(backend)->getOpenCLRuntime()->getGpuType() == INTEL)) {
+#ifdef MNN_SUPPORT_INTEL_SUBGROUP
             if(static_cast<OpenCLBackend *>(backend)->getOpenCLRuntime()->isSupportedIntelSubgroup()){
                 std::vector<int> inputShape = tensorShapeFormat(input);
                 std::vector<int> outputShape = tensorShapeFormat(output);
@@ -810,6 +810,7 @@ public:
                 TensorUtils::setTensorPad(input, padding.first, pad_right, 0, 0);
                 TensorUtils::setTensorChannelPack(input, 16);
             }
+#endif /* MNN_SUPPORT_INTEL_SUBGROUP */
             return new ConvBufWinograd(op, backend);
         }
 #ifdef MNN_SUPPORT_INTEL_SUBGROUP

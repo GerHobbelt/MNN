@@ -23,6 +23,9 @@
 #include "../CPUBinary.hpp"
 #include "../CPUUnary.hpp"
 #include "../CPUPool.hpp"
+#ifndef M_PI
+#define M_PI 3.141592654
+#endif
 #define PACK 4
 #define FLOAT float
 using Vec = MNN::Math::Vec<float, 4>;
@@ -215,8 +218,13 @@ void MNNQuantScaleFP32(float* absmax, float* quant_scale, float* dequant_scale, 
         for (int t = 0; t < thread; ++t) {
             absVal = std::max(absVal, absmaxPtr[t * batch]);
         }
-        quant_scale[i] = 127.0f / absVal;
-        dequant_scale[i] = absVal / 127.0f;
+        if (absVal < 1e-7) {
+            quant_scale[i] = 1.f;
+            dequant_scale[i] = 1.f;
+        } else {
+            quant_scale[i] = 127.0f / absVal;
+            dequant_scale[i] = absVal / 127.0f;
+        }
     }
 }
 void MNNQuantSumFP32(float* sum, const float* dequant_scale, size_t thread, size_t batch) {
@@ -287,7 +295,7 @@ static void MNNSumByAxisLForMatmul_A(float* dest, int8_t* source, const float* s
 
         for (int k = 0; k < blockNum; ++k) {
             // const auto src_x   = srcInt8 + w * LP;
-            const auto src_x = srcInt8 + k * (EP * LP * blockSizeQuad);
+            const auto src_x = srcInt8 + k * (step * LP * blockSizeQuad);
             for (int w = 0; w < step; ++w) {
                 float dequantScale = scale[0];
                 if (oneScale == 0) {
@@ -296,7 +304,7 @@ static void MNNSumByAxisLForMatmul_A(float* dest, int8_t* source, const float* s
                 int sumint32 = 0;
                 const auto src_y = src_x + w * LP;
                 for (int j = 0; j < blockSizeQuad; ++j) {
-                    const auto src_z = src_y + j * (EP * LP);
+                    const auto src_z = src_y + j * (step * LP);
                     for (int i = 0; i < LP; ++i) {
                         sumint32 += src_z[i];
                     }
@@ -309,7 +317,7 @@ static void MNNSumByAxisLForMatmul_A(float* dest, int8_t* source, const float* s
         dest += (step * blockNum);
         realDstCount -= step;
         srcInt8 += col_buffer_unit_size;
-    } while(realDstCount > 0); 
+    } while(realDstCount > 0);
 }
 
 template<typename T>
@@ -2070,36 +2078,41 @@ void MNNPowC8(float* dest, const float* source, const float* powfParam, size_t b
 }
 #endif // no MNN_USE_NEON
 
-void MNNGridSampleComputeCord(float* dst, const float* src, size_t inH, size_t inW, size_t outH, size_t outW, size_t stride, bool alignCorners) {
+void MNNGridSampleComputeCord(float* dst, const float* src, size_t inH, size_t inW, size_t outH, size_t outW, bool alignCorners) {
     float a = alignCorners ? 1.0f : 0.0f;
     float b = alignCorners ? 0.0f : 1.0f;
-    for (auto h = 0; h < outH; ++h) {
-        auto __gridPtr = src + h * stride;
-        auto cordH = dst + h * outW * 2;
-        for (auto w = 0; w < outW; ++w) {
-            auto x = __gridPtr[2 * w + 0];
-            auto y = __gridPtr[2 * w + 1];
-            cordH[2 * w + 0] = ((1 + x) * (inW - a) - b) * 0.5f;
-            cordH[2 * w + 1] = ((1 + y) * (inH - a) - b) * 0.5f;
-        }
+    int area = outH * outW;
+    float kx = 0.5f * ((float)inW - a);
+    float bx = 0.5f * ((float)inW - a - b);
+    float ky = 0.5f * ((float)inH - a);
+    float by = 0.5f * ((float)inH - a - b);
+    for (int w = 0; w < area; ++w) {
+        auto x = src[2 * w + 0];
+        auto y = src[2 * w + 1];
+        dst[2 * w + 0] = kx * x + bx;
+        dst[2 * w + 1] = ky * y + by;
     }
 }
-void MNNGridSampleComputeCord3D(float* dst, const float* src, size_t inD, size_t inH, size_t inW, size_t outD, size_t outH, size_t outW, size_t strideD, size_t strideH, bool alignCorners) {
+void MNNGridSampleComputeCord3D(float* dst, const float* src, size_t inD, size_t inH, size_t inW, size_t outD, size_t outH, size_t outW, bool alignCorners) {
+    int strideD = outH * outW * 3;
+    int strideH = outW * 3;
     float a = alignCorners ? 1.0f : 0.0f;
     float b = alignCorners ? 0.0f : 1.0f;
-    for (auto d = 0; d < outD; ++d) {
-        for (auto h = 0; h < outH; ++h) {
-            auto __gridPtr = src + d * strideD + h * strideH;
-            auto cordH = dst + (d * outH + h) * outW * 3;
-            for (auto w = 0; w < outW; ++w) {
-                auto x = __gridPtr[3 * w + 0];
-                auto y = __gridPtr[3 * w + 1];
-                auto z = __gridPtr[3 * w + 2];
-                cordH[3 * w + 0] = ((1 + x) * (inW - a) - b) * 0.5f;
-                cordH[3 * w + 1] = ((1 + y) * (inH - a) - b) * 0.5f;
-                cordH[3 * w + 2] = ((1 + z) * (inD - a) - b) * 0.5f;
-            }
-        }
+    int area = outD * outH * outW;
+    float kx = 0.5f * ((float)inW - a);
+    float bx = 0.5f * ((float)inW - a - b);
+    float ky = 0.5f * ((float)inH - a);
+    float by = 0.5f * ((float)inH - a - b);
+    float kz = 0.5f * ((float)inD - a);
+    float bz = 0.5f * ((float)inD - a - b);
+
+    for (int w=0; w<area; ++w) {
+        auto x = src[3 * w + 0];
+        auto y = src[3 * w + 1];
+        auto z = src[3 * w + 2];
+        dst[3 * w + 0] = kx * x + bx;
+        dst[3 * w + 1] = ky * y + by;
+        dst[3 * w + 2] = kz * z + bz;
     }
 }
 
@@ -2762,7 +2775,7 @@ void MNNComputeMatMulForE_1(const float* A, const float* B, float* C, const floa
             Vec4 sumValue = Vec4(0.0f);
             auto by = B + y * l;
             for (int x=0; x<lC4; ++x) {
-                sumValue = sumValue + Vec4::load(A + x * 4) * Vec4::load(by + x * 4);
+                sumValue = Vec4::fma(sumValue, Vec4::load(A + x * 4), Vec4::load(by + x * 4));
             }
             float sumRemain = 0.0f;
             for (int x=lR; x<l; ++x) {
@@ -2791,10 +2804,10 @@ void MNNComputeMatMulForE_1(const float* A, const float* B, float* C, const floa
             auto srcY = A + y * l;
             for (int x=0; x<l; ++x) {
                 auto a = Vec4(A[x]);
-                sumValue0 = sumValue0 + a * Vec4::load(bs + h * x);
-                sumValue1 = sumValue1 + a * Vec4::load(bs + h * x + 4);
-                sumValue2 = sumValue2 + a * Vec4::load(bs + h * x + 8);
-                sumValue3 = sumValue3 + a * Vec4::load(bs + h * x + 12);
+                sumValue0 = Vec4::fma(sumValue0, a, Vec4::load(bs + h * x));
+                sumValue1 = Vec4::fma(sumValue1, a, Vec4::load(bs + h * x + 4));
+                sumValue2 = Vec4::fma(sumValue2, a, Vec4::load(bs + h * x + 8));
+                sumValue3 = Vec4::fma(sumValue3, a, Vec4::load(bs + h * x + 12));
             }
             Vec4::save(C + 16 * y, sumValue0);
             Vec4::save(C + 16 * y + 4, sumValue1);
@@ -2983,6 +2996,19 @@ void MNNSigmoid(float* dst, const float* src, size_t dataSize) {
     }
 }
 
+void MNNSiLu(float* dst, const float* src, size_t dataSize) {
+    float offset[4] = {
+       -1.0f,
+        0.0f,
+        0.0f,
+        0.0f
+    };
+    MNNExp(dst, src, offset, dataSize);
+    for (int i = 0; i < dataSize; ++i) {
+        dst[i] = src[i] / (1.0f + dst[i]);
+    }
+}
+
 /**
  Modified from https://github.com/alibaba/MNN/pull/1359
  Thanks for https://github.com/hroken
@@ -3026,6 +3052,69 @@ void MNNSigmoidLowp(float* dst, const float* src, size_t dataSize) {
         dst[i] = 1.0f / (1.0f + dst[i]);
     }
 #endif
+}
+
+void MNNSiLuLowp(float* dst, const float* src, size_t dataSize) {
+    float offset[4] = {
+       -1.0f,
+        0.0f,
+        0.0f,
+        0.0f
+    };
+    MNNExp(dst, src, offset, dataSize);
+#ifdef __aarch64__
+    int dataC4 = static_cast<int32_t>(dataSize) / 4;
+    int remain = static_cast<int32_t>(dataSize) % 4;
+    float32x4_t one = vdupq_n_f32(1.0f);
+
+    if(dataC4 > 0) {
+        float32x4_t out = vld1q_f32(dst);
+        float32x4_t in = vld1q_f32(src);
+        // neon optimization for sigmid cpu
+        for (int i = 1; i < dataC4; ++i) {
+            out = vdivq_f32(in, vaddq_f32(one,out));
+            vst1q_f32(dst ,out);
+            dst += 4;
+            src += 4;
+            out = vld1q_f32(dst);
+            in = vld1q_f32(src);
+        }
+        out = vdivq_f32(in, vaddq_f32(one,out));
+        vst1q_f32(dst, out);
+        dst += 4;
+        src += 4;
+    }
+    if (remain > 0) {
+        float intmp[4] = {0};
+        float atmp[4] = {0};
+        ::memcpy(intmp, dst, remain * sizeof(float));
+        ::memcpy(atmp, src, remain * sizeof(float));
+        float32x4_t out = vld1q_f32(intmp);
+        float32x4_t in = vld1q_f32(atmp);
+        out = vdivq_f32(in, vaddq_f32(one, out));
+        vst1q_f32(intmp, out);
+        ::memcpy(dst, intmp, remain * sizeof(float));
+    }
+#else
+    for (int i = 0; i < dataSize; ++i) {
+        dst[i] = src[i] / (1.0f + dst[i]);
+    }
+#endif
+}
+
+void MNNDftAbs(const float* input, const float* window, float* output, float* buffer, int nfft) {
+    for (int i = 0; i < nfft; ++i) {
+        buffer[i] = input[i] * window[i];
+    }
+    for (int k = 0; k < nfft / 2 + 1; ++k) {
+        float real_sum = 0.f, imag_sum = 0.f;
+        for (int n = 0; n < nfft; ++n) {
+            float angle = 2 * M_PI * k * n / nfft;
+            real_sum += buffer[n] * std::cos(angle);
+            imag_sum -= buffer[n] * std::sin(angle);
+        }
+        output[k] = std::sqrt(real_sum * real_sum + imag_sum * imag_sum);
+    }
 }
 
 static void _MNNAdjustOptimalSparseKernel(int& sparseBlockOC, MNN::CoreFunctions::MNNPackedSparseMatMul& packedSparseMatMul) {
@@ -3131,7 +3220,7 @@ void MNNCoreFunctionInit() {
     gCoreFunction->MNNFp16ToFp8 = MNNFp16ToFp8;
     gCoreFunction->MNNFp8ToFp32 = MNNFp8ToFp32;
     gCoreFunction->MNNFp8ToFp16 = MNNFp8ToFp16;
-    
+
     // MatMul
     gCoreFunction->MNNGetMatMulPackMode = MNNGetMatMulPackMode;
     gCoreFunction->MNNPackC4ForMatMul_A = MNNPackC4ForMatMul_A;

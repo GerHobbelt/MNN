@@ -24,6 +24,7 @@ out/
 .gradle
 .gradle/
 build/
+buildvisionOs/
 
 # Signing files
 .signing/
@@ -360,9 +361,3 @@ pymnn_build/
 
 # mnncompress generated
 MNN_compression_pb2.py
-
-# model path
-model/
-
-# datasets
-datasets/

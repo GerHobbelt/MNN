@@ -19,6 +19,8 @@
 namespace MNN {
 class VulkanImageConverter;
 class VulkanBasicExecution;
+typedef std::tuple<const Tensor::InsideDescribe::NativeInsideDescribe*, bool, MNN_DATA_FORMAT> VulkanTensorConvertKey;
+typedef std::tuple<std::shared_ptr<VulkanImageConverter>, std::shared_ptr<VulkanCommandPool::Buffer>, std::weak_ptr<Tensor::InsideDescribe::NativeInsideDescribe>>  VulkanTensorConvertValue;
 
 class VulkanBackend : public Backend {
 public:
@@ -37,6 +39,8 @@ public:
 
     const VulkanPipeline* getPipeline(const std::string& key, const std::vector<VkDescriptorType>& types,
                                       const std::vector<uint32_t>& localSize = std::vector<uint32_t>()) const;
+
+    SharedPtr<VulkanPipeline> getPrivatePipeline(const std::string& key, const std::vector<VkDescriptorType>& types);
 
     const VulkanCommandPool& getPool() const {
         return (* mRuntime->mCmdPool);
@@ -94,9 +98,7 @@ private:
     mutable std::shared_ptr<VulkanFence> mFence;
 
 
-    mutable std::map<std::tuple<const Tensor::InsideDescribe::NativeInsideDescribe*, bool, MNN_DATA_FORMAT>,
-                     std::pair<std::shared_ptr<VulkanImageConverter>, std::shared_ptr<VulkanCommandPool::Buffer>>>
-        mConverters;
+    mutable std::map<VulkanTensorConvertKey, VulkanTensorConvertValue> mConverters;
 
     bool mDirect;
     const VulkanRuntime* mRuntime;

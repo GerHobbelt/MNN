@@ -31,11 +31,12 @@ MetalConvolution1x1::MetalConvolution1x1(Backend *backend, const MNN::Op *op) : 
     loadWeight(op, ldInt8Weight);
 }
 
-MetalConvolution1x1::MetalConvolution1x1(Backend *backend, const MNN::Op *op, std::shared_ptr<MNN::Tensor> weight, std::shared_ptr<MNN::Tensor> bias, std::shared_ptr<MNN::Tensor> dequantScale, int dequantBits) : MetalConvolutionCommon(backend, op, bias) {
+MetalConvolution1x1::MetalConvolution1x1(Backend *backend, const MNN::Op *op, std::shared_ptr<MNN::Tensor> weight, std::shared_ptr<MNN::Tensor> bias, std::shared_ptr<MNN::Tensor> dequantScale, int dequantBits, float scaleCoef) : MetalConvolutionCommon(backend, op, bias) {
     mWeight = weight;
     mBias = bias;
     mDequantScaleBias = dequantScale;
     mDequantBits = dequantBits;
+    mScaleCoef = scaleCoef;
 }
 
 
@@ -46,7 +47,7 @@ bool MetalConvolution1x1::onClone(Backend* bn, const Op* op, Execution** dst) {
     if (nullptr == dst) {
         return true;
     }
-    *dst = new MetalConvolution1x1(bn, op, mWeight, mBias, mDequantScaleBias, mDequantBits);
+    *dst = new MetalConvolution1x1(bn, op, mWeight, mBias, mDequantScaleBias, mDequantBits, mScaleCoef);
     return true;
 }
 
@@ -72,12 +73,26 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
     auto context = (__bridge MNNMetalContext *)backend->context();
     int blockSize = 1;
     if (mDequantScaleBias.get()) {
-        blockSize = (int)(mDequantScaleBias->usize() /sizeof(float) / oc_4 / 2 / 4);
+        int bytes = sizeof(float);
+        if(backend->useFp16InsteadFp32()) {
+            bytes = sizeof(__fp16);
+        }
+        blockSize = (int)(mDequantScaleBias->usize() / bytes / oc_4 / 2 / 4);
     }
     // create const buffer
-    int constants[] = {is, ic_4, ow, oh, os, oc_4, oc, ob, blockSize, mActivationType};
-    mConstBuffer = backend->getConstBuffer(sizeof(constants));
-    ::memcpy(mConstBuffer.contents, constants, sizeof(constants));
+    mConstBuffer = backend->getConstBuffer(sizeof(Param));
+    auto param = (Param *)mConstBuffer.contents;
+    param->input_size = is;
+    param->input_slice = ic_4;
+    param->output_width = ow;
+    param->output_height = oh;
+    param->output_size = os;
+    param->output_slice = oc_4;
+    param->output_channel = oc;
+    param->batch = ob;
+    param->block_size = blockSize;
+    param->activation = mActivationType;
+    param->scale_coef = mScaleCoef;
 
     MetalRuntime* rt = (MetalRuntime *)backend->runtime();
     if (mDequantScaleBias.get()) {
@@ -87,11 +102,43 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
         std::string name = "conv1x1_g1z4_w8";
         mPipeline = [context pipelineWithName:@"conv1x1_g1z4_w8" fp16:backend->useFp16InsteadFp32()];
         if (mDequantBits == 4) {
-            if(context.isSimdGroupAvailable && ob * ow * oh == 1) {
-                mPipeline = [context pipelineWithName:@"conv1x1_g1z4_m1w4" fp16:backend->useFp16InsteadFp32()];
-                name = "conv1x1_g1z4_m1w4";
-                mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 8), 1, 1), MTLSizeMake(8, 8, 1));
-
+            if(rt->supportSimdGroupReduce() && ob * ow * oh == 1) {
+                // unrool c for avoid memory exceed
+                if(oc > 16384 && oc_4 % 2 == 0) {
+                    mPipeline = [context pipelineWithName:@"conv1x1_gemv_g16_w4" fp16:backend->useFp16InsteadFp32()];
+                    name = "conv1x1_gemv_g16_w4";
+//                    MNN_PRINT("g16 ic: %d oc: %d\n", input->channel(), oc);
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 16), 1, 1), MTLSizeMake(64, 1, 1));
+                } else {
+                    mPipeline = [context pipelineWithName:@"conv1x1_gemv_g8_w4" fp16:backend->useFp16InsteadFp32()];
+                    name = "conv1x1_gemv_g8_w4";
+//                    MNN_PRINT("g8  ic: %d oc: %d\n", input->channel(), oc);
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 8), 1, 1), MTLSizeMake(64, 1, 1));
+                }
+                return NO_ERROR;
+            } else if(rt->supportSimdGroupMatrix()  && ob * ow * oh > 8 && oc > 8 && ic_4 % 8 == 0) {
+                // Generally threadgroup memory >= 16KB
+                auto smem_size = [[context device] maxThreadgroupMemoryLength];
+                // choose different tile for different computation
+                if(ob * ow * oh >= 128 && oc >= 512 && ob * ow * oh * oc > 512 * 2048 && smem_size >= 8192) {
+                    mPipeline = [context pipelineWithName:@"conv1x1_gemm_32x64_w4" fp16:backend->useFp16InsteadFp32()];
+                    name = "conv1x1_gemm_32x64_w4";
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(ob * ow * oh, 32), UP_DIV(oc, 64), 1), MTLSizeMake(128, 1, 1));
+                                        
+                } else if(ob * ow * oh >= 32 && ob * ow * oh * oc > 128 * 2048) {
+                    mPipeline = [context pipelineWithName:@"conv1x1_gemm_32x16_w4" fp16:backend->useFp16InsteadFp32()];
+                    name = "conv1x1_gemm_32x16_w4";
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(ob * ow * oh, 32), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
+                } else if(oc > 512 && ob * ow * oh * oc > 128 * 2048) {
+                    mPipeline = [context pipelineWithName:@"conv1x1_gemm_16x32_w4" fp16:backend->useFp16InsteadFp32()];
+                    name = "conv1x1_gemm_16x32_w4";
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(ob * ow * oh, 16), UP_DIV(oc, 32), 1), MTLSizeMake(32, 1, 1));
+                } else {
+                    mPipeline = [context pipelineWithName:@"conv1x1_gemm_16x16_w4" fp16:backend->useFp16InsteadFp32()];
+                    name = "conv1x1_gemm_16x16_w4";
+//                                    MNN_PRINT("gemm M: %d N: %d\n", ob * ow * oh, oc);
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(ob * ow * oh, 16), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
+                }
                 return NO_ERROR;
             } else {
                 mPipeline = [context pipelineWithName:@"conv1x1_g1z4_w4" fp16:backend->useFp16InsteadFp32()];
@@ -120,6 +167,22 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
         mThreads = std::make_pair(std::get<0>(ret), std::get<1>(ret));
         return NO_ERROR;
     }
+    
+    if(rt->supportSimdGroupMatrix()) {
+        // total computation not too small
+        if(ob * ow * oh >= 16 && ic_4 >= 4 && ic_4 % 2 == 0 && oc_4 >= 4 && ob * ow * oh * ic_4 * oc_4 >= 64 * 64 * 64) {
+            // Enough threads
+            if(ob * ow * oh * oc_4 / ic_4 >= 1024) {
+                mPipeline = [context pipelineWithName:@"conv1x1_gemm_32x16" fp16:backend->useFp16InsteadFp32()];
+                mThreads = std::make_pair(MTLSizeMake(UP_DIV(ob * ow * oh, 32), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
+            } else {
+                mPipeline = [context pipelineWithName:@"conv1x1_gemm_16x16" fp16:backend->useFp16InsteadFp32()];
+                mThreads = std::make_pair(MTLSizeMake(UP_DIV(ob * ow * oh, 16), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
+            }
+            return NO_ERROR;
+        }
+    }
+    
     if(rt->getTuneLevel() == Never) {
         if (ow * oh >= 128) {
             NSUInteger gid_x = UP_DIV(ow * oh, 8);

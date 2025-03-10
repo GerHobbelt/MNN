@@ -107,7 +107,7 @@ public:
     std::pair<int, int> multiThreadDivide(int size) const;
     virtual bool onSelectDynamicAllocator(int index, int maxIndex) override;
     // dividedSize's length should be larger than threadNumber
-    void computeDivideSizes(int size, int* dst) const;
+    void computeDivideSizes(int size, int* dst, float computeI = 0.f) const;
 
 public:
     virtual MemObj* onAcquire(const Tensor* nativeTensor, StorageType storageType) override;
@@ -184,6 +184,7 @@ protected:
 private:
     int mThreadNumber;
     std::vector<std::pair<float, int>> mGroupWithComputeRate;
+    float mComputeI = 0.f;
 
     std::shared_ptr<CPURuntime::DynamicAllocator> mDmaInfo;
     std::shared_ptr<EagerBufferAllocator> mStaticAllocator;
@@ -235,6 +236,9 @@ private:
         static name _temp;\
         CPUBackend::addCreator(opType, &_temp); \
     }
+
+#define REGISTER_CPU_OP_CREATOR_AUDIO(name, opType) \
+    REGISTER_CPU_OP_CREATOR(name, opType)
 
 } // namespace MNN
 

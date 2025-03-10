@@ -20,13 +20,16 @@ void ConvLowMemoryExecution::getInfoFromOpLowMemory(std::shared_ptr<ConvolutionC
         MNN_ASSERT(false);
     }
     
-    mResource->mInputChannel = quanCommon->weight.size() / (mResource->mKernelWidth * mResource->mKernelHeight * mResource->mOutputChannel);
     // set mNumQuantBit
     if(quanCommon->canUseInt4){
         mNumQuantBit = 4;
-        mResource->mInputChannel = (quanCommon->weight.size() * 2) / (mResource->mKernelWidth * mResource->mKernelHeight * mResource->mOutputChannel);
     }else{
         mNumQuantBit = 8;
+    }
+    if (mOp->main_as_Convolution2D()->common()->inputCount() > 0) {
+        mResource->mInputChannel = mOp->main_as_Convolution2D()->common()->inputCount();
+    } else {
+        mResource->mInputChannel = quanCommon->weight.size() / (mResource->mKernelWidth * mResource->mKernelHeight * mResource->mOutputChannel);
     }
     // src of alpha in CPU
     float * dequantAlpha = quanCommon->alpha.get();
@@ -236,6 +239,9 @@ void ConvLowMemoryExecution::tune1x1CaseLowMemory(Tensor * input, Tensor * outpu
         if(inputChannels % 4 != 0){
             buildOption.emplace("-DINPUT_CHANNEL_LEAVE");
         }
+        if(itemC[knl_idx] == 8 && outputShape.at(3) % itemC[knl_idx] > 0 && outputShape.at(3) % itemC[knl_idx] <= 4){
+            buildOption.emplace("-DCHANNEL_BOUNDARY_PROTECT");
+        }
         kernel[knl_idx]        = mOpenCLBackend->getOpenCLRuntime()->buildKernel("conv_2d", kernelName[knl_idx], buildOption);
         uint32_t maxWorkGroupSize = static_cast<uint32_t>(mOpenCLBackend->getOpenCLRuntime()->getMaxWorkGroupSize(kernel[knl_idx]));
         
@@ -273,6 +279,9 @@ void ConvLowMemoryExecution::tune1x1CaseLowMemory(Tensor * input, Tensor * outpu
     std::set<std::string> buildOption = mResource->mBuildOptions;
     if(inputChannels % 4 != 0){
         buildOption.emplace("-DINPUT_CHANNEL_LEAVE");
+    }
+    if(itemC[min_index] == 8 && outputShape.at(3) % itemC[min_index] > 0 && outputShape.at(3) % itemC[min_index] <= 4){
+        buildOption.emplace("-DCHANNEL_BOUNDARY_PROTECT");
     }
     unit.kernel        = mOpenCLBackend->getOpenCLRuntime()->buildKernel("conv_2d", kernelName[min_index], buildOption);
     uint32_t idx = 0;
@@ -335,6 +344,9 @@ void ConvLowMemoryExecution::tuneGeneralCaseLowMemory(Tensor * input, Tensor * o
         if(inputChannels % 4 != 0){
             buildOption.emplace("-DINPUT_CHANNEL_LEAVE");
         }
+        if(itemC[knl_idx] == 8 && outputShape.at(3) % itemC[knl_idx] > 0 && outputShape.at(3) % itemC[knl_idx] <= 4){
+            buildOption.emplace("-DCHANNEL_BOUNDARY_PROTECT");
+        }
         kernel[knl_idx]        = mOpenCLBackend->getOpenCLRuntime()->buildKernel("conv_2d", kernelName[knl_idx], buildOption);
         uint32_t maxWorkGroupSize = static_cast<uint32_t>(mOpenCLBackend->getOpenCLRuntime()->getMaxWorkGroupSize(kernel[knl_idx]));
 
@@ -375,6 +387,9 @@ void ConvLowMemoryExecution::tuneGeneralCaseLowMemory(Tensor * input, Tensor * o
     std::set<std::string> buildOption = mResource->mBuildOptions;
     if(inputChannels % 4 != 0){
         buildOption.emplace("-DINPUT_CHANNEL_LEAVE");
+    }
+    if(itemC[min_index] == 8 && outputShape.at(3) % itemC[min_index] > 0 && outputShape.at(3) % itemC[min_index] <= 4){
+        buildOption.emplace("-DCHANNEL_BOUNDARY_PROTECT");
     }
     unit.kernel        = mOpenCLBackend->getOpenCLRuntime()->buildKernel("conv_2d", kernelName[min_index], buildOption);
 
