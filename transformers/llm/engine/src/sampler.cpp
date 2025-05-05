@@ -431,7 +431,7 @@ struct SubsetLogits Sampler::penalty(struct SubsetLogits subset) {
         }
     }
     // 3. penalize logits according to penalty_map
-    auto scoresMap = (float*)(subset.logits->writeMap<float>());
+    auto scoresMap = (float*)(subset.logits->readMap<float>());
     for (auto it = penalty_map.begin(); it != penalty_map.end(); ++it) {
         scoresMap[it->first] = (scoresMap[it->first] >= 0.0f) ? (scoresMap[it->first]/it->second) : (scoresMap[it->first]*it->second);
     }

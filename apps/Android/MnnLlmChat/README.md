@@ -47,7 +47,7 @@ This is our full multimodal language model (LLM) Android app
   cd project/android
   mkdir build_64
   cd build_64
-  ../build_64.sh "-DMNN_LOW_MEMORY=true -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true -DMNN_BUILD_LLM=true -DMNN_SUPPORT_TRANSFORMER_FUSE=true -DMNN_ARM82=true -DMNN_USE_LOGCAT=true -DMNN_OPENCL=true -DLLM_SUPPORT_VISION=true -DMNN_BUILD_OPENCV=true -DMNN_IMGCODECS=true -DLLM_SUPPORT_AUDIO=true -DMNN_BUILD_AUDIO=true -DMNN_BUILD_DIFFUSION=ON -DMNN_SEP_BUILD=ON"
+  ../build_64.sh "-DMNN_LOW_MEMORY=true -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true -DMNN_BUILD_LLM=true -DMNN_SUPPORT_TRANSFORMER_FUSE=true -DMNN_ARM82=true -DMNN_USE_LOGCAT=true -DMNN_OPENCL=true -DLLM_SUPPORT_VISION=true -DMNN_BUILD_OPENCV=true -DMNN_IMGCODECS=true -DLLM_SUPPORT_AUDIO=true -DMNN_BUILD_AUDIO=true -DMNN_BUILD_DIFFUSION=ON -DMNN_SEP_BUILD=OFF"
   ```
 + copy to llm android app project
   ```shell
@@ -61,6 +61,12 @@ This is our full multimodal language model (LLM) Android app
   ```
 
 # Releases
+## Version 0.4.0
++ Click here to [download](https://meta.alicdn.com/data/mnn/mnn_chat_d_0_4_0.apk)
++ Now compatible with the Qwen3 model, with a toggle for Deep Thinking mode
++ Added Dark Mode, fully aligned with Material 3 design guidelines
++ Optimized chat interface with support for multi-line input
++ New Settings page: customize sampler type, system prompt, max new tokens, and more
 
 ## Version 0.3.0
 + Click here to [download](https://meta.alicdn.com/data/mnn/mnn_chat_d_0_3_0.apk)
