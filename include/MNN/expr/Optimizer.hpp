@@ -50,7 +50,7 @@ public:
         return nullptr;
     }
 
-    //Given paramters and measure cost, the parameters must be the same as onGetParameters
+    //Given parameters and measure cost, the parameters must be the same as onGetParameters
     virtual Cost onMeasure(const std::vector<VARP>& outputs, std::shared_ptr<Parameters> parameters = nullptr) = 0;
 
     //Modify the output directly, the parameters must be the same as onGetParameters
