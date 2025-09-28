@@ -12,11 +12,9 @@ class MsApiClient {
     private val host = "modelscope.cn"
     private var okHttpClient: OkHttpClient? = null
 
-    @JvmField
     val apiService: MsApiService
 
     init {
-        // Initialize Retrofit
         val retrofit = Retrofit.Builder()
             .baseUrl("https://$host")
             .addConverterFactory(GsonConverterFactory.create())

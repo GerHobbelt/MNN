@@ -29,6 +29,8 @@ public:
 
     void SetAssistantPrompt(const std::string& assistant_prompt);
 
+    void enableAudioOutput(bool b);
+
 private:
     std::string response_string_for_debug{};
     std::string model_path_;
@@ -37,6 +39,7 @@ private:
     json config_{};
     bool is_r1_{false};
     bool stop_requested_{false};
+    bool generate_text_end_{false};
     bool keep_history_{true};
     std::vector<float> waveform{};
     Llm* llm_{nullptr};
@@ -44,6 +47,7 @@ private:
     int max_new_tokens_{2048};
     std::string system_prompt_;
     json current_config_{};
+    bool enable_audio_output_{false};
 };
 }
 

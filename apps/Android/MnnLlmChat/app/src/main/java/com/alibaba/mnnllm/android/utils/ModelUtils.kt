@@ -8,7 +8,6 @@ import com.alibaba.mnnllm.android.R
 import java.util.Locale
 
 object ModelUtils {
-    @JvmStatic
     fun getDrawableId(modelName: String?): Int {
         if (modelName == null) {
             return 0
@@ -54,8 +53,9 @@ object ModelUtils {
             if ((prefillTimeUs > 0)) (promptLen / (prefillTimeUs / 1000000.0)) else 0.0
         val decodeSpeed = if ((decodeTimeUs > 0)) (decodeLen / (decodeTimeUs / 1000000.0)) else 0.0
         return String.format(
-            "Prefill: %d tokens, %.2f tokens/s\nDecode: %d tokens, %.2f tokens/s",
-            promptLen, promptSpeed, decodeLen, decodeSpeed
+            "Prefill: %.2fs, %d tokens, %.2f tokens/s \nDecode: %.2fs, %d tokens, %.2f tokens/s",
+            prefillTimeUs.toFloat() / 1000000, promptLen, promptSpeed,
+            decodeTimeUs.toFloat() / 1000000,decodeLen, decodeSpeed,
         )
     }
 
@@ -69,12 +69,17 @@ object ModelUtils {
     private val goodList: MutableSet<String> = HashSet()
     private val blackList: MutableSet<String> = HashSet()
 
+
+//    private val localModelList = mutableListOf<ModelItem>()
     /**
      * you can add ModelItem.fromLocalModel("Qwen-Omni-7B", "/data/local/tmp/omni_test/model")
      * to load local models
      */
-    private val localModelList = mutableListOf<ModelItem>()
-
+    private val localModelList = mutableListOf(
+        ModelItem.fromLocalModel("Qwen-Omni-7B", "/data/local/tmp/mnn_bench/Qwen2.5-Omni-7B-MNN"),
+        ModelItem.fromLocalModel("Qwen-Omni-3B", "/data/local/tmp/mnn_bench/Qwen2.5-Omni-3B-MNN"),
+        ModelItem.fromLocalModel("Qwen3-30B-A3B-MNN", "/data/local/tmp/mnn_bench/Qwen3-30B-A3B-MNN")
+    )
 
     init {
         blackList.add("taobao-mnn/bge-large-zh-MNN") //embedding
@@ -124,7 +129,7 @@ object ModelUtils {
             if (blackList.contains(item.modelId) || isBlackListPattern(modelIdLowerCase)) {
                 continue
             }
-            if (isQwen3(modelIdLowerCase)) {
+            if (isQwen3(modelIdLowerCase) || isOmni(modelIdLowerCase)) {
                 recommendedItems.add(item)
             } else if (goodList.contains(item.modelId)) {
                 goodItems.add(item)
@@ -144,11 +149,11 @@ object ModelUtils {
     }
 
     fun isAudioModel(modelName: String): Boolean {
-        return modelName.lowercase(Locale.getDefault()).contains("audio")
+        return modelName.lowercase(Locale.getDefault()).contains("audio") || isOmni(modelName)
     }
 
     fun isMultiModalModel(modelName: String): Boolean {
-        return isAudioModel(modelName) || isVisualModel(modelName) || isDiffusionModel(modelName)
+        return isAudioModel(modelName) || isVisualModel(modelName) || isDiffusionModel(modelName) || isOmni(modelName)
     }
 
     fun isDiffusionModel(modelName: String): Boolean {
@@ -195,7 +200,7 @@ object ModelUtils {
     }
 
     fun isVisualModel(modelName: String): Boolean {
-        return modelName.lowercase(Locale.getDefault()).contains("vl")
+        return modelName.lowercase(Locale.getDefault()).contains("vl") || isOmni(modelName)
     }
 
     fun isR1Model(modelName: String): Boolean {
@@ -212,5 +217,9 @@ object ModelUtils {
 
     fun isSupportThinkingSwitch(modelName: String): Boolean {
         return isQwen3(modelName)
+    }
+
+    fun supportAudioOutput(modelName: String): Boolean {
+        return isOmni(modelName)
     }
 }

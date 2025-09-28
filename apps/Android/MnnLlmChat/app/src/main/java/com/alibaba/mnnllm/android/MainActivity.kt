@@ -52,8 +52,6 @@ class MainActivity : AppCompatActivity() {
         drawerLayout = findViewById(R.id.drawer_layout)
         updateChecker = UpdateChecker(this)
         updateChecker!!.checkForUpdates(this, false)
-
-        // Set up ActionBar toggle
         toggle = ActionBarDrawerToggle(
             this, drawerLayout,
             toolbar,
@@ -106,7 +104,16 @@ class MainActivity : AppCompatActivity() {
         progressDialog!!.show()
         if (destPath == null) {
             destPath =
-                ModelDownloadManager.getInstance(this).getDownloadedFile(modelId!!)!!.absolutePath
+                ModelDownloadManager.getInstance(this).getDownloadedFile(modelId!!)?.absolutePath
+            if (destPath == null) {
+                Toast.makeText(
+                    this,
+                    getString(R.string.model_not_found, modelId),
+                    Toast.LENGTH_LONG
+                ).show()
+                progressDialog?.dismiss()
+                return
+            }
         }
         val isDiffusion = ModelUtils.isDiffusionModel(modelId!!)
         var configFilePath: String? = null
@@ -152,7 +159,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == ModelDownloadManager.REQUEST_CODE_POST_NOTIFICATIONS) {
-            ModelDownloadManager.getInstance(this).startForegroundService()
+            ModelDownloadManager.getInstance(this).tryStartForegroundService()
         }
     }
 

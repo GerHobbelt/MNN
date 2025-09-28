@@ -7,8 +7,8 @@ import android.os.Handler
 import android.text.TextUtils
 import android.util.Log
 import android.widget.Toast
-import com.alibaba.mls.api.HfApiClient
-import com.alibaba.mls.api.HfApiClient.RepoSearchCallback
+import com.alibaba.mls.api.hf.HfApiClient
+import com.alibaba.mls.api.hf.HfApiClient.RepoSearchCallback
 import com.alibaba.mls.api.ModelItem
 import com.alibaba.mls.api.download.DownloadInfo
 import com.alibaba.mls.api.download.DownloadListener
@@ -192,7 +192,6 @@ class ModelListPresenter(private val context: Context, private val view: ModelLi
 
 
     override fun onItemClicked(hfModelItem: ModelItem) {
-        //avoid click too fast
         val now = System.currentTimeMillis()
         if (now - this.lastClickTime < 500) {
             return
@@ -213,6 +212,16 @@ class ModelListPresenter(private val context: Context, private val view: ModelLi
                 this.context,
                 context.resources.getString(R.string.downloading_please_wait), Toast.LENGTH_SHORT
             ).show()
+        }
+    }
+
+    override fun onDownloadTotalSize(modelId: String, totalSize: Long) {
+        if (this.mainHandler != null) {
+            mainHandler!!.post {
+                modelListAdapter!!.updateItem(
+                    modelId
+                )
+            }
         }
     }
 
