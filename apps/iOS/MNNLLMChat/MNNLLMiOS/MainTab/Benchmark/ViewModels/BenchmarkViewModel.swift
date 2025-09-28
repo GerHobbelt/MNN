@@ -80,7 +80,7 @@ class BenchmarkViewModel: ObservableObject {
                 
                 // Filter only downloaded models that are available locally
                 availableModels = allModels.filter { model in
-                    model.isDownloaded && model.localPath != nil
+                    model.isDownloaded && model.localPath != ""
                 }
                 
                 print("BenchmarkViewModel: Loaded \(availableModels.count) available local models")
@@ -94,6 +94,12 @@ class BenchmarkViewModel: ObservableObject {
     }
     
     // MARK: - Public Action Handlers
+    
+    @MainActor
+    func dismissError() {
+        showError = false
+        errorMessage = ""
+    }
     
     /// Handles start/stop benchmark button taps
     func onStartBenchmarkTapped() {
