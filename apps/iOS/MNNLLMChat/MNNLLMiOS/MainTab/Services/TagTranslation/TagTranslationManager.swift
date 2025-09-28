@@ -7,7 +7,6 @@
 
 import Foundation
 
-// MARK: - 标签翻译管理器
 class TagTranslationManager {
     static let shared = TagTranslationManager()
     private var tagTranslations: [String: String] = [:]
@@ -20,7 +19,7 @@ class TagTranslationManager {
     
     func getLocalizedTag(_ tag: String) -> String {
         let currentLanguage = LanguageManager.shared.currentLanguage
-        let isChineseLanguage = currentLanguage == "简体中文"
+        let isChineseLanguage = currentLanguage == "zh-Hans"
         
         if isChineseLanguage, let translation = tagTranslations[tag] {
             return translation

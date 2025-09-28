@@ -7,8 +7,8 @@
 
 import SwiftUI
 
-// MARK: - 工具栏视图
 struct ToolbarView: View {
+    @ObservedObject var viewModel: ModelListViewModel
     @Binding var selectedSource: ModelSource
     @Binding var showSourceMenu: Bool
     @Binding var selectedTags: Set<String>
@@ -21,7 +21,6 @@ struct ToolbarView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                // 下载源选择器
                 SourceSelector(
                     selectedSource: $selectedSource,
                     showSourceMenu: $showSourceMenu,
@@ -36,7 +35,6 @@ struct ToolbarView: View {
                 
                 Spacer()
                 
-                // 右侧筛选按钮
                 FilterButton(
                     showFilterMenu: $showFilterMenu,
                     selectedTags: $selectedTags,

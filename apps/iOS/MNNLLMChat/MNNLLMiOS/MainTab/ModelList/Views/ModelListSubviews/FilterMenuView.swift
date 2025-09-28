@@ -7,10 +7,9 @@
 
 import SwiftUI
 
-// MARK: - 筛选菜单视图
 struct FilterMenuView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = TBModelListViewModel()
+    @StateObject private var viewModel = ModelListViewModel()
     @Binding var selectedTags: Set<String>
     @Binding var selectedCategories: Set<String>
     @Binding var selectedVendors: Set<String>
@@ -19,9 +18,8 @@ struct FilterMenuView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    // 标签筛选
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("按标签筛选")
+                        Text("filter.byTag")
                             .font(.headline)
                             .fontWeight(.semibold)
                         
@@ -43,9 +41,8 @@ struct FilterMenuView: View {
                     
                     Divider()
                     
-                    // 厂商筛选
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("按厂商筛选")
+                        Text("filter.byVendor")
                             .font(.headline)
                             .fontWeight(.semibold)
                         
@@ -69,11 +66,11 @@ struct FilterMenuView: View {
                 }
                 .padding()
             }
-            .navigationTitle("筛选选项")
+            .navigationTitle("filter.title")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("清除") {
+                    Button("button.clear") {
                         selectedTags.removeAll()
                         selectedCategories.removeAll()
                         selectedVendors.removeAll()
@@ -81,7 +78,7 @@ struct FilterMenuView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") {
+                    Button("button.done") {
                         dismiss()
                     }
                 }

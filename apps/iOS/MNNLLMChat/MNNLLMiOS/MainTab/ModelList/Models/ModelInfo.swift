@@ -1,91 +1,145 @@
 //
-//  ModelClient.swift
+//  TBModelInfo.swift
 //  MNNLLMiOS
 //
-//  Created by 游薪渝(揽清) on 2025/1/3.
+//  Created by 游薪渝(揽清) on 2025/7/4.
 //
 
 import Hub
 import Foundation
 
 struct ModelInfo: Codable {
-    let modelId: String
-    let createdAt: String
-    let downloads: Int
+    // MARK: - Properties
+    let modelName: String
     let tags: [String]
+    let categories: [String]?
+    let size_gb: Double?
+    let vendor: String?
+    let sources: [String: String]?
+    let tagTranslations: [String: [String]]?
     
-    var name: String {
-        modelId.removingTaobaoPrefix()
-    }
-    
+    // Runtime properties
     var isDownloaded: Bool = false
     var lastUsedAt: Date?
-    
     var cachedSize: Int64? = nil
     
-    var localPath: String {
-        return HubApi.shared.localRepoLocation(HubApi.Repo.init(id: modelId)).path
+    // MARK: - Initialization
+    
+    init(modelName: String = "",
+         tags: [String] = [],
+         categories: [String]? = nil,
+         size_gb: Double? = nil,
+         vendor: String? = nil,
+         sources: [String: String]? = nil,
+         tagTranslations: [String: [String]]? = nil,
+         isDownloaded: Bool = false,
+         lastUsedAt: Date? = nil,
+         cachedSize: Int64? = nil) {
+        
+        self.modelName = modelName
+        self.tags = tags
+        self.categories = categories
+        self.size_gb = size_gb
+        self.vendor = vendor
+        self.sources = sources
+        self.tagTranslations = tagTranslations
+        self.isDownloaded = isDownloaded
+        self.lastUsedAt = lastUsedAt
+        self.cachedSize = cachedSize
     }
     
-    var formattedSize: String {
-        if isDownloaded {
-            return formatLocalSize()
-        } else if let cached = cachedSize {
-            return formatBytes(cached)
+    init(modelId: String, isDownloaded: Bool = true) {
+        let modelName = modelId.components(separatedBy: "/").last ?? modelId
+        
+        self.init(
+            modelName: modelName,
+            tags: [],
+            sources: ["huggingface": modelId],
+            isDownloaded: isDownloaded
+        )
+    }
+    
+    // MARK: - Model Identity & Localization
+    
+    var id: String {
+        guard let sources = sources else {
+            return "taobao-mnn/\(modelName)"
+        }
+        
+        let sourceKey = ModelSourceManager.shared.selectedSource.rawValue
+        return sources[sourceKey] ?? "taobao-mnn/\(modelName)"
+    }
+    
+    var localizedTags: [String] {
+        let currentLanguage = LanguageManager.shared.currentLanguage
+        let isChineseLanguage = currentLanguage == "简体中文"
+        
+        if isChineseLanguage, let translations = tagTranslations {
+            let languageCode = "zh-Hans"
+            return translations[languageCode] ?? tags
         } else {
-            return "计算中..."
+            return tags
         }
     }
     
-    func fetchRemoteSize() async -> Int64? {
-        let modelScopeId = modelId.replacingOccurrences(of: "taobao-mnn", with: "MNN")
+    // MARK: - File System & Path Management
+    
+    var localPath: String {
+        let modelScopeId = "taobao-mnn/\(modelName)"
+        return HubApi.shared.localRepoLocation(HubApi.Repo.init(id: modelScopeId)).path
+    }
+    
+    // MARK: - Size Calculation & Formatting
+    
+    var formattedSize: String {
+        if let cached = cachedSize {
+            return FileOperationManager.shared.formatBytes(cached)
+        } else if isDownloaded {
+            return FileOperationManager.shared.formatLocalDirectorySize(at: localPath)
+        } else if let sizeGb = size_gb {
+            return String(format: "%.1f GB", sizeGb)
+        } else {
+            return "None"
+        }
+    }
+    
+    /// Calculates and caches the local directory size
+    /// - Returns: The formatted size string and updates cachedSize property
+    mutating func calculateAndCacheSize() -> String {
+        if let cached = cachedSize {
+            return FileOperationManager.shared.formatBytes(cached)
+        }
         
+        if isDownloaded {
+            do {
+                let sizeInBytes = try FileOperationManager.shared.calculateDirectorySize(at: localPath)
+                self.cachedSize = sizeInBytes
+                return FileOperationManager.shared.formatBytes(sizeInBytes)
+            } catch {
+                print("Error calculating directory size: \(error)")
+                return "Unknown"
+            }
+        } else if let sizeGb = size_gb {
+            return String(format: "%.1f GB", sizeGb)
+        } else {
+            return "None"
+        }
+    }
+    
+    // MARK: - Remote Size Calculation
+    
+    func fetchRemoteSize() async -> Int64? {
+        let modelScopeId = "taobao-mnn/\(modelName)"
+
         do {
             let files = try await fetchFileList(repoPath: modelScopeId, root: "", revision: "")
             let totalSize = try await calculateTotalSize(files: files, repoPath: modelScopeId)
             return totalSize
         } catch {
-            print("Error fetching remote size for \(modelId): \(error)")
+            print("Error fetching remote size for \(id): \(error)")
             return nil
         }
     }
-    
-    private func formatLocalSize() -> String {
-        let path = localPath
-        guard FileManager.default.fileExists(atPath: path) else { return "未知" }
-        
-        do {
-            let totalSize = try calculateDirectorySize(at: path)
-            return formatBytes(totalSize)
-        } catch {
-            return "未知"
-        }
-    }
-    
-    private func calculateDirectorySize(at path: String) throws -> Int64 {
-        let fileManager = FileManager.default
-        var totalSize: Int64 = 0
-        
-        let enumerator = fileManager.enumerator(atPath: path)
-        while let fileName = enumerator?.nextObject() as? String {
-            let filePath = (path as NSString).appendingPathComponent(fileName)
-            let attributes = try fileManager.attributesOfItem(atPath: filePath)
-            if let fileSize = attributes[.size] as? Int64 {
-                totalSize += fileSize
-            }
-        }
-        
-        return totalSize
-    }
-    
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useGB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
-    }
-    
-    // MARK: - 云端文件大小计算方法
     
     private func fetchFileList(repoPath: String, root: String, revision: String) async throws -> [ModelFile] {
         let url = try buildURL(
@@ -119,6 +173,8 @@ struct ModelInfo: Codable {
         return totalSize
     }
     
+    // MARK: - Network Utilities
+    
     private func buildURL(repoPath: String, path: String, queryItems: [URLQueryItem]) throws -> URL {
         var components = URLComponents()
         components.scheme = "https"
@@ -139,21 +195,9 @@ struct ModelInfo: Codable {
         }
     }
     
+    // MARK: - Codable
+    
     private enum CodingKeys: String, CodingKey {
-        case modelId
-        case tags
-        case downloads
-        case createdAt
-        case cachedSize
-    }
-}
-
-struct RepoInfo: Codable {
-    let modelId: String
-    let sha: String
-    let siblings: [Sibling]
-
-    struct Sibling: Codable {
-        let rfilename: String
+        case modelName, tags, categories, size_gb, vendor, sources, tagTranslations, cachedSize
     }
 }
