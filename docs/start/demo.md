@@ -20,8 +20,10 @@
 ### 图像实例分割
 代码位置：`demo/exec/segment.cpp`
 
-下载 deeplabv3 分割模型并转换到 mnn 模型
+下载 deeplabv3 分割模型
 [https://storage.googleapis.com/download.tensorflow.org/models/tflite/gpu/deeplabv3_257_mv_gpu.tflite](https://storage.googleapis.com/download.tensorflow.org/models/tflite/gpu/deeplabv3_257_mv_gpu.tflite)
+
+使用 [模型转换工具](../tools/convert.md) 转换为 MNN 模型，转换时加上参数 --keepInputFormat=0 【把输入由NHWC转换为NC4HW4布局】
 
 ```bash
 ./segment.out model.mnn input.png result.png
