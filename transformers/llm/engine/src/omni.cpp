@@ -4,6 +4,7 @@
 //  Created by MNN on 2025/04/08.
 //  Copyright © 2018, Alibaba Group Holding Limited
 //
+//#define MNN_OPEN_TIME_TRACE
 
 #ifdef _WIN32
 #define _USE_MATH_DEFINES
@@ -25,7 +26,6 @@
 #ifdef LLM_SUPPORT_AUDIO
 #include <audio/audio.hpp>
 #endif
-
 namespace MNN {
 using namespace Express;
 namespace Transformer {
@@ -69,11 +69,17 @@ Omni::Omni(std::shared_ptr<LlmConfig> config) : Llm(config) {
     if (config->is_audio()) {}
 }
 
-void Omni::load() {
-    Llm::load();
+bool Omni::load() {
+    auto res = Llm::load();
+    if (!res) {
+        return false;
+    }
     if (mConfig->has_talker()) {
         mTalker.reset(new Talker(mConfig, this));
-        mTalker->load();
+        res = mTalker->load();
+    }
+    if (!res) {
+        return false;
     }
     ScheduleConfig config;
     if (mConfig->mllm_config_.empty()) {
@@ -114,10 +120,17 @@ void Omni::load() {
     }
     if (mConfig->is_visual()) {
         mVisionModule.reset(Module::load({}, {}, mConfig->visual_model().c_str(), mProcessorRuntimeManager, &module_config));
+        if (nullptr == mVisionModule.get()) {
+            return false;
+        }
     }
     if (mConfig->is_audio()) {
         mAudioModule.reset(Module::load({}, {}, mConfig->audio_model().c_str(), mProcessorRuntimeManager, &module_config));
+        if (nullptr == mAudioModule.get()) {
+            return false;
+        }
     }
+    return true;
 }
 
 #ifdef LLM_SUPPORT_VISION
@@ -142,6 +155,7 @@ std::vector<int> Omni::defaultVisionProcess(VARP image) {
 }
 
 std::vector<int> Omni::qwen2VisionProcess(VARP image) {
+    AUTOTIME;
     const auto inputNames = mVisionModule->getInfo()->inputNames;
     bool hasWindowIndex = inputNames.size() == 4 && inputNames[3] == "window_index";
     // Qwen2-VL / Qwen2.5-VL
@@ -409,7 +423,7 @@ std::vector<std::pair<int, int>> minicpmBestSize(std::pair<int, int> original_si
     std::pair<int, int> best_grid = *std::min_element(candidates.begin(), candidates.end(),
         [log_ratio](const std::pair<int, int>& g1, const std::pair<int, int>& g2) {
             auto key = [log_ratio](const std::pair<int, int>& g) -> double {
-                if (g.first == 0) return std::numeric_limits<double>::infinity();
+                if (g.first == 0) return std::numeric_limits<double>::max();
                 return std::abs(log_ratio - std::log(static_cast<double>(g.second) / g.first));
             };
             return key(g1) < key(g2);
@@ -554,7 +568,7 @@ std::vector<int> Omni::minicpmVisionProcess(VARP image) {
 #endif
 
 std::vector<int> Omni::visionProcess(const std::string& file) {
-#ifdef LLM_SUPPORT_VISION
+#if defined(LLM_SUPPORT_VISION) && defined(MNN_IMGCODECS)
     VARP image = MNN::CV::imread(file);
     return visionProcess(image);
 #else
@@ -583,6 +597,7 @@ std::vector<int> Omni::visionProcess(VARP image) {
         imgIds = defaultVisionProcess(image);
     }
     mContext->vision_us += _t.durationInUs();
+    mContext->pixels_mp += (mVisionWidth / 1000.0f) * (mVisionHeight / 1000.0f);
     // set vision number for image idx
     mVisionNum += 1;
     return imgIds;
@@ -600,6 +615,7 @@ std::vector<int> Omni::audioProcess(const std::string& file) {
         MNN_PRINT("Omni Can't open audio: %s\n", file.c_str());
         return std::vector<int>(0);
     }
+    mContext->audio_input_s += (float)(waveform->getInfo()->size) / sample_rate;
     return audioProcess(waveform);
 #else
     return std::vector<int>(0);
@@ -612,7 +628,7 @@ std::vector<int> Omni::audioProcess(MNN::Express::VARP waveform) {
         MNN_PRINT("Omni Can't process audio: waveform is null\n");
         return std::vector<int>(0);
     }
-    
+
     Timer _t;
     auto input_features  = MNN::AUDIO::whisper_fbank(waveform);
     VARP audio_embedding;
@@ -754,7 +770,7 @@ std::vector<int> Omni::tokenizer_encode(const MultimodalPrompt& multimodal_input
     std::smatch match;
     std::vector<int> ids{};
     mPositionIds.clear();
-    
+
     while (std::regex_search(searchStart, prompt.cend(), match, multimode_regex)) {
         auto txt_ids = mTokenizer->encode(match.prefix().str());
         addPositionIds(txt_ids.size());
@@ -769,7 +785,7 @@ std::vector<int> Omni::tokenizer_encode(const MultimodalPrompt& multimodal_input
             mul_ids = processAudioContent(content, multimodal_input.audios);
             // MNN_PRINT("tokenizer_encode(MultimodalPrompt) audio mul_ids size: %lu", mul_ids.size());
         }
-        
+
         ids.insert(ids.end(), mul_ids.begin(), mul_ids.end());
         searchStart = match.suffix().first;
     }
@@ -899,7 +915,7 @@ static inline bool needNewVar(VARP var, int axis, int seq_len) {
 }
 
 VARP Omni::gen_position_ids(int seq_len) {
-    auto positionIdsDims = mModules[0]->getInfo()->inputs[2].dim;
+    auto positionIdsDims = mModule->getInfo()->inputs[2].dim;
     if (positionIdsDims[0] == 1) {
         return Llm::gen_position_ids(seq_len);
     }
@@ -989,7 +1005,7 @@ void Omni::generateWavform() {
     }
 }
 
-void Talker::load() {
+bool Talker::load() {
     initRuntime();
     mSeqLenIndex = 1;
     set_config("{\"sampler_type\": \"mixed\", \"temperature\": 0.9, \"topK\": 40, \"topP\": 0.8, \"penalty\": 1.05}");
@@ -1011,11 +1027,13 @@ void Talker::load() {
     Module::Config module_config;
     module_config.shapeMutable = false;
     module_config.rearrange    = true;
-    mModules.resize(1);
     std::vector<std::string> inputNames {"inputs_embeds", "attention_mask", "position_ids", "logits_index"};
 
-    mModules[0].reset(Module::load(inputNames,
+    mModule.reset(Module::load(inputNames,
                                     {"logits"}, mConfig->talker_model().c_str(), mRuntimeManager, &module_config));
+    if (mModule.get() == nullptr) {
+        return false;
+    }
     // dit
     mPreDit.reset(Module::load({"cond", "spk", "code"}, {"code_embeds", "rope", "mask"},
                                 mConfig->predit_model().c_str(), mRuntimeManager, &module_config));
@@ -1025,9 +1043,13 @@ void Talker::load() {
     mBigvgan.reset(Module::load({"generated_mel"},
                                 {"waveform"}, mConfig->bigvgan_model().c_str(), mRuntimeManager, &module_config));
     // autoregressive decode module
-    mModulePool[std::make_pair(1, false)].reset(Module::clone(mModules[0].get()));
+    mModulePool[std::make_pair(1, false)].reset(Module::clone(mModule.get()));
     // prefill module
-    mModulePool[std::make_pair(mPrefillKey, mConfig->all_logits())] = mModules[0];
+    mModulePool[std::make_pair(mPrefillKey, mConfig->all_logits())] = mModule;
+    if (mBigvgan.get() == nullptr || mPreDit.get() == nullptr || mDit.get() == nullptr) {
+        return false;
+    }
+    return true;
 }
 
 void Talker::generate_init(std::ostream* os, const char* end_with) {
@@ -1128,7 +1150,6 @@ VARP Talker::ditForward(const int codec_size, const int* codec_tokens, const flo
             y0 = y0 + dy;
         }
     }
-    mContext->vision_us += _t.durationInUs();
     auto generated_mel = _Permute(y0, {0, 2, 1});
     return generated_mel;
 }
