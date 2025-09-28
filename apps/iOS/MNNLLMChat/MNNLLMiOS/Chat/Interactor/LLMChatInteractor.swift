@@ -81,6 +81,8 @@ final class LLMChatInteractor: ChatInteractorProtocol {
             
             DispatchQueue.main.async { [weak self] in
                 
+                PerformanceMonitor.shared.recordUIUpdate()
+                
                 switch userType {
                 case .user, .system:
                     self?.chatState.value.append(message)
@@ -97,18 +99,24 @@ final class LLMChatInteractor: ChatInteractorProtocol {
                     
                 case .assistant:
                     
-                    var updateLastMsg = self?.chatState.value[(self?.chatState.value.count ?? 1) - 1]
-                    
-                    if let isDeepSeek = self?.modelInfo.name.lowercased().contains("deepseek"), isDeepSeek == true,
-                        let text = self?.processor.process(progress: message.text) {
-                        updateLastMsg?.text = text
-                    } else {
-                        updateLastMsg?.text += message.text
+                    PerformanceMonitor.shared.measureExecutionTime(operation: "String concatenation") {
+                        var updateLastMsg = self?.chatState.value[(self?.chatState.value.count ?? 1) - 1]
+                        
+                        if let isDeepSeek = self?.modelInfo.name.lowercased().contains("deepseek"), isDeepSeek == true,
+                            let text = self?.processor.process(progress: message.text) {
+                            updateLastMsg?.text = text
+                        } else {
+                            if let currentText = updateLastMsg?.text {
+                                updateLastMsg?.text = currentText + message.text
+                            } else {
+                                updateLastMsg?.text = message.text
+                            }
+                        }
+                        
+                        if let updatedMsg = updateLastMsg {
+                            self?.chatState.value[(self?.chatState.value.count ?? 1) - 1] = updatedMsg
+                        }
                     }
-                    
-                    message.text = self?.chatState.value[(self?.chatState.value.count ?? 1) - 1].text ?? ""
-                    
-                    self?.chatState.value[(self?.chatState.value.count ?? 1) - 1] = updateLastMsg ?? message
                 }
             }
         }
