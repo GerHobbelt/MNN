@@ -131,6 +131,7 @@ void MNNMaxPoolInt8_(int8_t* dst, int8_t* src, size_t outputWidth, size_t inputW
 void MNNInt8FunctionInit() {
     auto cpuFlags = libyuv::InitCpuFlags();
     auto core = MNN::MNNGetInt8CoreFunctions();
+    auto gcore = MNN::MNNGetCoreFunctions();
     core->MNNAvgPoolInt8 = MNNAvgPoolUint8;
     core->MNNMaxPoolInt8 = MNNMaxPoolInt8_;
     if (cpuFlags & libyuv::kCpuHasSSE41) {
@@ -142,6 +143,13 @@ void MNNInt8FunctionInit() {
 #ifdef MNN_LOW_MEMORY
         core->Int8GemmKernel_W4 = _SSE_MNNGemmInt8AddBiasScale_16x4_w4;
 #endif
+    }
+    {
+        gcore->int8MatmulRelatedFunctions.Int8GemmKernel = core->Int8GemmKernel;
+        gcore->int8MatmulRelatedFunctions.Int8GemmKernelFast = core->Int8GemmKernelFast;
+        gcore->int8MatmulRelatedFunctions.Int8GemmKernel_W4 = core->Int8GemmKernel_W4;
+        gcore->int8MatmulRelatedFunctions.MNNGetGemmUnit = core->MNNGetGemmUnit;
+        gcore->int8MatmulRelatedFunctions.MNNPackC4Int8ForMatMul_A = core->MNNPackC4Int8ForMatMul_A;
     }
 }
 

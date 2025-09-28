@@ -77,6 +77,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include "MNN/expr/ExecutorScope.hpp"
 
 #import <Foundation/Foundation.h>
 #import "LLMInferenceEngineWrapper.h"
@@ -96,8 +97,8 @@
                  virtual void set_config(const std::string& config) = 0;
                  virtual void load() = 0;
                  virtual void response(const std::string& input_str, std::ostream* os = nullptr, const char* end_with = nullptr) = 0;
-                 virtual void response(const std::vector<std::pair<std::string, std::string>>& history, std::ostream* os = nullptr, const char* end_with = nullptr, int max_new_tokens = 512) = 0;
-                 virtual void response(const std::vector<int>& tokens, std::ostream* os = nullptr, const char* end_with = nullptr, int max_new_tokens = 512) = 0;
+                 virtual void response(const std::vector<std::pair<std::string, std::string>>& history, std::ostream* os = nullptr, const char* end_with = nullptr, int max_new_tokens = 999999) = 0;
+                 virtual void response(const std::vector<int>& tokens, std::ostream* os = nullptr, const char* end_with = nullptr, int max_new_tokens = 999999) = 0;
                  virtual void reset() = 0;
                  virtual bool stopped() = 0;
                  virtual int generate(int max_token_number = 0) = 0;
@@ -529,6 +530,10 @@ bool remove_directory_safely(const std::string& path) {
             return NO;
         }
         
+        MNN::BackendConfig backendConfig;
+        auto executor = MNN::Express::Executor::newExecutor(MNN_FORWARD_CPU, backendConfig, 1);
+        MNN::Express::ExecutorScope s(executor);
+        
         // Get memory mapping setting with default fallback
         BOOL useMmap = configDict[@"use_mmap"] == nil ? YES : [configDict[@"use_mmap"] boolValue];
         
@@ -540,19 +545,24 @@ bool remove_directory_safely(const std::string& path) {
         }
         
         // Setup temporary directory with improved error handling
-        std::string model_path_str([modelPath UTF8String]);
-        std::string temp_directory_path = model_path_str + "/temp";
+        // Use iOS system temporary directory instead of model path (which is read-only in Bundle)
+        NSString *tempDir = NSTemporaryDirectory();
+        NSString *modelName = [[modelPath lastPathComponent] stringByDeletingPathExtension];
+        NSString *tempDirPath = [tempDir stringByAppendingPathComponent:[NSString stringWithFormat:@"MNN_%@_temp", modelName]];
+        std::string temp_directory_path = [tempDirPath UTF8String];
         
         // Clean up existing temp directory
         if (!remove_directory_safely(temp_directory_path)) {
             NSLog(@"Warning: Failed to remove existing temp directory, continuing...");
         }
         
-        // Create new temp directory
+        // Create new temp directory in system temp location
         if (mkdir(temp_directory_path.c_str(), 0755) != 0 && errno != EEXIST) {
             NSLog(@"Error: Failed to create temp directory: %s, errno: %d", temp_directory_path.c_str(), errno);
             return NO;
         }
+        
+        NSLog(@"Created temp directory at: %s", temp_directory_path.c_str());
         
         // Configure LLM with proper error handling
         bool useMmapCpp = (useMmap == YES);
@@ -660,12 +670,21 @@ bool remove_directory_safely(const std::string& path) {
     
     _isProcessing = true;
     
+    // Store reference for block execution
+    LLMInferenceEngineWrapper *blockSelf = self;
+    
     // Use high priority queue for better responsiveness
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        // Check if object is still valid before proceeding
+        if (!blockSelf || !blockSelf->_llm) {
+            NSLog(@"LLMInferenceEngineWrapper was deallocated or model unloaded during inference");
+            return;
+        }
+        
         @try {
             auto inference_start_time = std::chrono::high_resolution_clock::now();
             
-            OptimizedLlmStreamBuffer::CallBack callback = [output, self](const char* str, size_t len) {
+            OptimizedLlmStreamBuffer::CallBack callback = [output](const char* str, size_t len) {
                 if (output && str && len > 0) {
                     @autoreleasepool {
                         NSString *nsOutput = [[NSString alloc] initWithBytes:str
@@ -685,50 +704,79 @@ bool remove_directory_safely(const std::string& path) {
             
             // Thread-safe history management
             {
-                std::lock_guard<std::mutex> lock(self->_historyMutex);
-                self->_history.emplace_back(ChatMessage("user", [input UTF8String]));
+                std::lock_guard<std::mutex> lock(blockSelf->_historyMutex);
+                blockSelf->_history.emplace_back(ChatMessage("user", [input UTF8String]));
             }
             
             std::string inputStr = [input UTF8String];
+            #ifdef DEBUG
             if (inputStr == "benchmark") {
-                [self performBenchmarkWithOutput:&os];
+                [blockSelf performBenchmarkWithOutput:&os];
             } else {
+            #else
+            {
+            #endif
                 // Get initial context state for performance measurement
-                auto context = self->_llm->getContext();
+                auto context = blockSelf->_llm->getContext();
                 int initial_prompt_len = context->prompt_len;
                 int initial_decode_len = context->gen_seq_len;
                 int64_t initial_prefill_time = context->prefill_us;
                 int64_t initial_decode_time = context->decode_us;
                 
                 // Reset stop flag before starting inference
-                self->_shouldStopInference = false;
+                blockSelf->_shouldStopInference = false;
                 
-                // Execute inference with controllable generation
-                // Use response with limited tokens and check for stop condition
-                const int batch_size = 10; // Generate tokens in small batches
-                const int max_token_number = 999999;
-                int generated_tokens = 0;
-                
-                while (generated_tokens < max_token_number && !self->_shouldStopInference.load()) {
-                    // Generate a small batch of tokens
-                    int tokens_to_generate = std::min(batch_size, max_token_number - generated_tokens);
+                // Execute inference with enhanced stopped status checking
+                @try {
+                    // Debug information for prompt
+                    std::string prompt_debug = "";
+                    for (const auto& msg : blockSelf->_history) {
+                        prompt_debug += msg.first + ": " + msg.second + "\n";
+                    }
+                    NSLog(@"submitNative prompt_string_for_debug:\n%s\nmax_new_tokens_: %d", prompt_debug.c_str(), 999999);
                     
-                    @try {
-                        // Use response with limited token count for better control
-                        self->_llm->response(self->_history, &os, "<eop>", tokens_to_generate);
-                        generated_tokens += tokens_to_generate;
+                    // Start inference with initial response processing
+                    blockSelf->_llm->response(blockSelf->_history, &os, "<eop>", 1);
+                    int current_size = 1;
+                    int max_new_tokens = 999999;
+                    
+                    // Continue generation with precise token-by-token control
+                    while (!blockSelf->_shouldStopInference.load() && 
+                           !blockSelf->_llm->stoped() &&
+                           current_size < max_new_tokens) {
                         
-                        // Check if we hit a natural stopping point
-                        if (self->_llm->stoped()) {
-                            break;
-                        }
+                        // Generate single token for maximum control
+                        blockSelf->_llm->generate(1);
+                        current_size++;
                         
-                        // Small delay to allow for cancellation
+                        // Small delay to allow UI updates and stop signal processing
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                        
-                    } @catch (NSException *exception) {
-                        NSLog(@"Exception during response generation: %@", exception.reason);
-                        break; // Exit loop on error
+                    }
+                    
+                    // Send appropriate end signal based on stop reason
+                    if (output) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            if (blockSelf->_shouldStopInference.load()) {
+                                output(@"<stopped>");
+                            } else {
+                                output(@"<eop>");
+                            }
+                        });
+                    }
+                    
+                    NSLog(@"Inference completed. Generated tokens: %d, Stopped by user: %s, Model stopped: %s", 
+                          current_size, 
+                          blockSelf->_shouldStopInference.load() ? "YES" : "NO",
+                          blockSelf->_llm->stoped() ? "YES" : "NO");
+                    
+                } @catch (NSException *exception) {
+                    NSLog(@"Exception during response generation: %@", exception.reason);
+                    
+                    // Send end signal even on error to unlock UI
+                    if (output) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            output(@"<eop>");
+                        });
                     }
                 }
                 
@@ -787,7 +835,7 @@ bool remove_directory_safely(const std::string& path) {
             }
         }
         @finally {
-            self->_isProcessing = false;
+            blockSelf->_isProcessing = false;
         }
     });
 }

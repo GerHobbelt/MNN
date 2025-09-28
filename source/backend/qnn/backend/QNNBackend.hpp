@@ -21,6 +21,10 @@
 #include "backend/cpu/CPUTensorConvert.hpp"
 #include "QNNPerf.hpp"
 #include <memory>
+#ifdef ENABLE_QNN_CONVERT_MODE
+#include "QNNConvertorInterface.hpp"
+#include "QNNConvertor.hpp"
+#endif
 
 #define REGISTER_QNN_OP_CREATOR(name, opType)       \
     void ___##name##__##opType##__() {              \
@@ -46,6 +50,7 @@ public:
     virtual void onCopyBuffer(const Tensor* srcTensor, const Tensor* dstTensor) const override;
 
 private:
+    void startProfile() const;
     void inputIO(const Tensor* srcTensor, const Tensor* dstTensor) const;
     void outputIO(const Tensor* srcTensor, const Tensor* dstTensor) const;
 
@@ -59,7 +64,6 @@ public:
     static bool addCreator(OpType t, Creator* c);
 
 private:
-
     void createContextAndGraph();
     void finalizeGraph();
     void executeGraph() const;
@@ -72,6 +76,8 @@ public:
     int getTensorIdx(const Tensor * tensor) const;
     Qnn_Tensor_t * getNativeTensor(const Tensor * tensor);
     std::shared_ptr<QNNTensorWrapper> getTensorWrapper(const Tensor * tensor);
+    bool useCache() const;
+    bool getUseFP16() const;
 
 private:
     void clean();
@@ -95,7 +101,7 @@ private:
     Qnn_GraphHandle_t mQnnGraphHandle = nullptr;
     QnnHtpGraph_CustomConfig_t mQnnHtpGraphCustomConfig{};
     QnnGraph_Config_t mQnnGraphConfig{};
-    const std::string mQnnGraphName = "MNN_QNN_UNIQUE_GRAPH";
+    const std::string mQnnGraphName = "MNN_QNN_GRAPH";
 
     // Tensor related
     // add <mutable> due to <getTensorIdx> has to be const
@@ -122,11 +128,20 @@ public:
 
     void onGabageCollect(int level) override;
     virtual CompilerType onGetCompilerType() const override;
+    // If buffer is not nullptr, try copy cache, else delete cache
+    virtual bool onSetCache(const void* buffer, size_t size) override;
+    
+    virtual std::pair<const void*, size_t> onGetCache() override;
+    virtual bool onSetCachePath(const char* path, int mode) override;
 
 private:
+    void freeContext() const;
+    void allocContext() const;
     static bool registerCustomOpPackage(QNN_INTERFACE_VER_TYPE qnnInterface, Qnn_BackendHandle_t backendHandle, const std::string & path, const std::string & interfaceProvider, const std::string & target);
 
 private:
+    bool mUseCache = false;
+
     // Backend config
     Backend::Info mInfo;
     BackendConfig::PowerMode mPower;
@@ -137,7 +152,10 @@ private:
     Qnn_LogHandle_t mQnnLogHandle = nullptr;
     Qnn_BackendHandle_t mQnnBackendHandle = nullptr;
     Qnn_DeviceHandle_t mQnnDeviceHandle = nullptr;
-
+    // Qnn Context
+    mutable Qnn_ContextHandle_t mQnnContextHandle = nullptr;
+    const QnnContext_Config_t** mQnnContextConfig = nullptr;
+    mutable std::vector<int8_t> mBinaryBuffer;
 friend class QnnBackend;
 };
 

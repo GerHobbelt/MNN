@@ -3,6 +3,8 @@
 
 [Download](#releases)  [下载](./README_CN.md#releases)
 
+[GooglePlay](https://play.google.com/store/apps/details?id=com.alibaba.mnnllm.android.release)
+
 [iOS App](../../iOS/MNNLLMChat/README.md)
 
 ## Introduction
@@ -48,7 +50,7 @@ This is our full multimodal language model (LLM) Android app
   cd project/android
   mkdir build_64
   cd build_64
-  ../build_64.sh "-DMNN_LOW_MEMORY=true -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true -DMNN_BUILD_LLM=true -DMNN_SUPPORT_TRANSFORMER_FUSE=true -DMNN_ARM82=true -DMNN_USE_LOGCAT=true -DMNN_OPENCL=true -DLLM_SUPPORT_VISION=true -DMNN_BUILD_OPENCV=true -DMNN_IMGCODECS=true -DLLM_SUPPORT_AUDIO=true -DMNN_BUILD_AUDIO=true -DMNN_BUILD_DIFFUSION=ON -DMNN_SEP_BUILD=OFF -DCMAKE_INSTALL_PREFIX=."
+  ../build_64.sh "-DMNN_LOW_MEMORY=true -DMNN_CPU_WEIGHT_DEQUANT_GEMM=true -DMNN_BUILD_LLM=true -DMNN_SUPPORT_TRANSFORMER_FUSE=true -DMNN_ARM82=true -DMNN_USE_LOGCAT=true -DMNN_OPENCL=true -DLLM_SUPPORT_VISION=true -DMNN_BUILD_OPENCV=true -DMNN_IMGCODECS=true -DLLM_SUPPORT_AUDIO=true -DMNN_BUILD_AUDIO=true -DMNN_BUILD_DIFFUSION=ON -DMNN_SEP_BUILD=OFF -DCMAKE_SHARED_LINKER_FLAGS='-Wl,-z,max-page-size=16384' -DCMAKE_INSTALL_PREFIX=."
   make install
   ```
 
@@ -59,6 +61,14 @@ This is our full multimodal language model (LLM) Android app
   ```
 
 # Releases
+## Version 0.6.8
++ Click here to [download](https://meta.alicdn.com/data/mnn/mnn_chat_0_6_8.apk)
++ add new models:  SmolLM3-3B、gemma-3-1b 
++ support penalty sampler in mixed sampler mode.
++ can switch models in chat screen.
++ can update models when the remote models changed.
++ fix download source for huggingface.
++ Support  Realtime voice call with ASR and TTS
 ## Version 0.5.1.2
 + Click here to [download](https://meta.alicdn.com/data/mnn/mnn_chat_0_5_1_2.apk)
 + fix huggingface download error
