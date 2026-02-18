@@ -341,16 +341,27 @@ bool Llm::load() {
         }
         // attentiion mask var
         {
-            mAttentionMaskVarVec[i] = _Input({1, 1, index, index}, NCHW, halide_type_of<float>());
-            auto ptr = mAttentionMaskVarVec[i]->writeMap<float>();
-            for (int i = 0; i < index; i++) {
-                for (int j = 0; j < index; j++) {
-                    ptr[index * i + j] = (j > i) * std::numeric_limits<float>::lowest();
+            // Mask: lower triangular
+            if (mConfig->backend_type() == "cpu") {
+                mAttentionMaskVarVec[i] = _Input({}, NCHW, halide_type_of<float>());
+                auto ptr = mAttentionMaskVarVec[i]->writeMap<float>();
+                ptr[0] = 0;
+            } else {
+                mAttentionMaskVarVec[i] = _Input({1, 1, index, index}, NCHW, halide_type_of<float>());
+                auto ptr = mAttentionMaskVarVec[i]->writeMap<float>();
+                for (int i = 0; i < index; i++) {
+                    for (int j = 0; j < index; j++) {
+                        ptr[index * i + j] = (j > i) * std::numeric_limits<float>::lowest();
+                    }
                 }
             }
         }
 
-        mPositionIdsVarVec[i] = _Input({index}, NCHW, halide_type_of<int>());
+        if (mConfig->is_mrope()) {
+            mPositionIdsVarVec[i] = _Input({3, index}, NCHW, halide_type_of<int>());
+        } else {
+            mPositionIdsVarVec[i] = _Input({index}, NCHW, halide_type_of<int>());
+        }
     }
 
     // MTP model load
@@ -906,6 +917,9 @@ void Llm::response(const std::string& user_content, std::ostream* os, const char
     auto prompt = user_content;
     if (mConfig->use_template()) {
         prompt = mPrompt->applyTemplate(user_content, true);
+        if (prompt.empty()) {
+            prompt = user_content;
+        }
     }
     std::vector<int> input_ids = tokenizer_encode(prompt);
     response(input_ids, os, end_with, max_new_tokens);
@@ -1061,11 +1075,18 @@ VARP Llm::gen_attention_mask(int seq_len) {
             }
         }
 
-        attentionMask = _Input({1, 1, seq_len, kv_seq_len}, NCHW, halide_type_of<float>());
-        auto ptr = attentionMask->writeMap<float>();
-        for (int i = 0; i < seq_len; i++) {
-            for (int j = 0; j < kv_seq_len; j++) {
-                ptr[kv_seq_len * i + j] = (j > i) * std::numeric_limits<float>::lowest();
+        // Mask: lower triangular
+        if (mConfig->backend_type() == "cpu") { // Now only cpu supports using lower triangular to opt the attention performance
+            attentionMask = _Input({}, NCHW, halide_type_of<float>());
+            auto ptr = attentionMask->writeMap<float>();
+            ptr[0] = 0;
+        } else {
+            attentionMask = _Input({1, 1, seq_len, kv_seq_len}, NCHW, halide_type_of<float>());
+            auto ptr = attentionMask->writeMap<float>();
+            for (int i = 0; i < seq_len; i++) {
+                for (int j = 0; j < kv_seq_len; j++) {
+                    ptr[kv_seq_len * i + j] = (j > i) * std::numeric_limits<float>::lowest();
+                }
             }
         }
         return attentionMask;
@@ -1123,6 +1144,10 @@ VARP Llm::gen_position_ids(int seq_len) {
         if (seq_len == 1) {
             auto ptr = mPositionIdsVarVec[0]->writeMap<int>();
             ptr[0] = is_glm2 ? mContext->gen_seq_len : mContext->all_seq_len;
+            if (mConfig->is_mrope()) {
+                ptr[1] = ptr[0];
+                ptr[2] = ptr[0];
+            }
             return mPositionIdsVarVec[0];
         }
         if(mPositionIdsVarVec.size() > 1 && seq_len == mDraftLength) {
@@ -1133,7 +1158,18 @@ VARP Llm::gen_position_ids(int seq_len) {
             return mPositionIdsVarVec[1];
         }
 
-        positionIds = _Input({seq_len}, NCHW, halide_type_of<int>());
+        if (mConfig->is_mrope()) {
+            positionIds = _Input({3, seq_len}, NCHW, halide_type_of<int>());
+            auto ptr = positionIds->writeMap<int>();
+            for (int i = 0; i < seq_len; i++) {
+                ptr[0 * seq_len + i] = i + mContext->all_seq_len;
+                ptr[1 * seq_len + i] = i + mContext->all_seq_len;
+                ptr[2 * seq_len + i] = i + mContext->all_seq_len;
+            }
+            return positionIds;
+        }
+
+        positionIds = _Input({1, seq_len}, NCHW, halide_type_of<int>());
         auto ptr = positionIds->writeMap<int>();
         if (seq_len == 1) {
             ptr[0] = is_glm2 ? mContext->gen_seq_len : mContext->all_seq_len;
