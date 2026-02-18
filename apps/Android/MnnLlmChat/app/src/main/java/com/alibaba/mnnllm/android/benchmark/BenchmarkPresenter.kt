@@ -4,10 +4,12 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.LifecycleCoroutineScope
 import com.alibaba.mnnllm.android.R
-import com.alibaba.mnnllm.android.model.ModelUtils
+import com.alibaba.mnnllm.android.model.ModelTypeUtils
 import com.alibaba.mnnllm.android.modelist.ModelItemWrapper
 import com.alibaba.mnnllm.android.modelist.ModelListManager
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 
 /**
  * Presenter for benchmark functionality
@@ -131,7 +133,7 @@ class BenchmarkPresenter(
                 showModelSelectorCard = true // Show model selector card (like iOS)
             )
             BenchmarkState.COMPLETED -> BenchmarkUIState(
-                startButtonText = context.getString(R.string.restart_test), // Changed to "重新评测"
+                startButtonText = context.getString(R.string.restart_test), //Changed to "Re-evaluate"
                 startButtonEnabled = true,
                 showProgressBar = false,
                 showResults = true,
@@ -408,11 +410,14 @@ class BenchmarkPresenter(
         lifecycleScope.launch {
             try {
                 Log.d(TAG, "Loading available models...")
-                availableModels = model.loadAvailableModels(context).filterNot { ModelUtils.isDiffusionModel(
-                    it.modelItem.modelName!!) }
+                Log.d(TAG, "Calling ModelListManager.initialize from BenchmarkPresenter", Throwable())
+                // Get current models or wait for them
+                val models = ModelListManager.getCurrentModels()?: emptyList()
+                availableModels = models.filterNot { ModelTypeUtils.isDiffusionModel(
+                    it.modelItem.modelName
+                ) }
                 Log.d(TAG, "Found ${availableModels.size} models")
                 view.updateModelSelector(availableModels)
-                
                 if (availableModels.isEmpty()) {
                     Log.e(TAG, "No models available")
                     stateMachine.transitionTo(BenchmarkState.ERROR, context.getString(R.string.no_models_available))
@@ -501,8 +506,8 @@ class BenchmarkPresenter(
                     showBenchmarkProgressBar = true,
                     benchmarkProgress = 10, // 10% for entering running state
                     showModelSelectorCard = true,
-                    showProgressCard = true, // 关键修复：显示进度卡片
-                    showStatusCard = true // 关键修复：显示状态卡片
+                    showProgressCard = true, //Critical fix: show progress card
+                    showStatusCard = true //Critical fix: show status card
                 )
                 applyUIState(runningUIState)
                 
@@ -538,8 +543,8 @@ class BenchmarkPresenter(
                                     showBenchmarkProgressBar = true,
                                     benchmarkProgress = realProgress,
                                     showModelSelectorCard = true,
-                                    showProgressCard = true, // 关键修复：显示进度卡片
-                                    showStatusCard = true // 关键修复：显示状态卡片
+                                    showProgressCard = true, //Critical fix: show progress card
+                                    showStatusCard = true //Critical fix: show status card
                                 )
                                 else -> return
                             }

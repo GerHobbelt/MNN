@@ -46,7 +46,8 @@ data class ModelConfig(
     @SerializedName("max_new_tokens")var maxNewTokens:Int?,
     @SerializedName("assistant_prompt_template")var assistantPromptTemplate:String?,
     @SerializedName("penalty_sampler")var penaltySampler:String?,
-    @SerializedName("jinja") var jinja: Jinja?
+    @SerializedName("jinja") var jinja: Jinja?,
+    @SerializedName("visual_model") var visualModel: String?
     ) {
     fun deepCopy(): ModelConfig {
         return ModelConfig(
@@ -71,10 +72,11 @@ data class ModelConfig(
             maxNewTokens = this.maxNewTokens,
             assistantPromptTemplate = this.assistantPromptTemplate,
             penaltySampler = this.penaltySampler,
-            useMmap =  this.useMmap,
-            jinja = this.jinja?.let { 
+            useMmap = this.useMmap,
+            jinja = this.jinja?.let {
                 Jinja(context = JinjaContext(enableThinking = it.context?.enableThinking == true))
-            }
+            },
+            visualModel = this.visualModel
         )
     }
 
@@ -90,7 +92,8 @@ data class ModelConfig(
                 this.penalty == loadedConfig.penalty &&
                 this.nGram == loadedConfig.nGram &&
                 this.nGramFactor == loadedConfig.nGramFactor &&
-                this.penaltySampler == loadedConfig.penaltySampler
+                this.penaltySampler == loadedConfig.penaltySampler &&
+                this.visualModel == loadedConfig.visualModel
     }
 
     companion object {
@@ -133,6 +136,17 @@ data class ModelConfig(
             if (modelId.startsWith("local/")) {
                 val localPath = modelId.removePrefix("local/")
                 val configFilePath = File(localPath, "config.json")
+                if (configFilePath.exists()) {
+                    return configFilePath.absolutePath
+                }
+                return null
+            }
+            if (modelId.startsWith("Builtin/")) {
+                val modelName = modelId.removePrefix("Builtin/MNN/")
+                val builtinModelsDir = File(ApplicationProvider.get().filesDir, ".mnnmodels/builtin")
+                val modelDir = File(builtinModelsDir, modelName)
+                val configFilePath = File(modelDir, "config.json")
+                Log.d(TAG, "getDefaultConfigFile for builtin model $modelId: modelName=$modelName, builtinModelsDir=${builtinModelsDir.absolutePath}, modelDir=${modelDir.absolutePath}, configFilePath=${configFilePath.absolutePath}, exists=${configFilePath.exists()}")
                 if (configFilePath.exists()) {
                     return configFilePath.absolutePath
                 }
@@ -186,6 +200,16 @@ data class ModelConfig(
         }
 
         fun getMarketConfigFile(modelId: String):String {
+            if (modelId.startsWith("local/")) {
+                val localPath = modelId.removePrefix("local/")
+                return File(localPath, "market_config.json").absolutePath
+            }
+            if (modelId.startsWith("Builtin/")) {
+                val modelName = modelId.removePrefix("Builtin/MNN/")
+                val builtinModelsDir = File(ApplicationProvider.get().filesDir, ".mnnmodels/builtin")
+                val modelDir = File(builtinModelsDir, modelName)
+                return File(modelDir, "market_config.json").absolutePath
+            }
             return getModelConfigDir(modelId) + "/market_config.json"
         }
 
@@ -220,7 +244,8 @@ data class ModelConfig(
             assistantPromptTemplate = "",
             penaltySampler = "greedy",
             useMmap = false,
-            jinja = null
+            jinja = null,
+            visualModel = "visual.mnn"
         )
 
     }

@@ -7,7 +7,7 @@ import android.util.Log
 import com.alibaba.mnnllm.android.llm.ChatService.Companion.provide
 import com.alibaba.mnnllm.android.chat.model.ChatDataItem
 import com.alibaba.mnnllm.android.modelsettings.ModelConfig
-import com.alibaba.mnnllm.android.model.ModelUtils
+import com.alibaba.mnnllm.android.model.ModelTypeUtils
 import com.alibaba.mnnllm.android.modelsettings.ModelConfig.Companion.getExtraConfigFile
 import com.google.gson.Gson
 import timber.log.Timber
@@ -20,9 +20,9 @@ import android.content.Context
 import android.app.ActivityManager
 import com.alibaba.mnnllm.android.modelsettings.Jinja
 import com.alibaba.mnnllm.android.modelsettings.JinjaContext
-import com.alibaba.mnnllm.android.modelsettings.ModelConfig.Companion.defaultConfig
 import com.alibaba.mnnllm.android.modelsettings.ModelConfig.Companion.loadConfig
-
+import com.alibaba.mnnllm.android.utils.FileSplitter
+import com.alibaba.mnnllm.android.qnn.QnnModule
 class LlmSession (
     private val modelId: String,
     override var sessionId: String,
@@ -43,6 +43,8 @@ class LlmSession (
 
     private var keepHistory = false
 
+    private var isQnn = false
+
     override fun getHistory(): List<ChatDataItem>?{
         return savedHistory
     }
@@ -51,8 +53,11 @@ class LlmSession (
     }
 
     override fun load() {
-        Log.d(TAG, "MNN_DEBUG load begin")
+        Log.d(TAG, "MNN_DEBUG load begin modelId: $modelId")
         modelLoading = true
+        isQnn = ModelTypeUtils.isQnnModel(modelId)
+
+        checkAndMergeSplitFiles()
         var historyStringList: List<String>? = null
         val currentHistory = this.savedHistory
         if (!currentHistory.isNullOrEmpty()) {
@@ -70,17 +75,20 @@ class LlmSession (
             File(rootCacheDir).mkdirs()
         }
         val configMap = HashMap<String, Any>().apply {
-            put("is_r1", ModelUtils.isR1Model(modelId))
+            put("is_r1", ModelTypeUtils.isR1Model(modelId))
             put("mmap_dir", rootCacheDir ?: "")
             put("keep_history", keepHistory)
         }
-        val extraConfig = ModelConfig.loadMergedConfig(configPath, getExtraConfigFile(modelId))
+        val llmConfig = ModelConfig.loadMergedConfig(configPath, getExtraConfigFile(modelId))!!
+        if (isQnn) {
+            llmConfig.visualModel = "visual_qnn_${QnnModule.modelMiddleName()}.mnn"
+        }
         Log.d(TAG, "MNN_DEBUG load initNative")
         nativePtr = initNative(
                 configPath,
                 historyStringList,
-        if (extraConfig != null) {
-            Gson().toJson(extraConfig)
+        if (llmConfig != null) {
+            Gson().toJson(llmConfig)
         } else {
             "{}"
         },
@@ -90,6 +98,36 @@ class LlmSession (
         modelLoading = false
         if (releaseRequested) {
             release()
+        }
+    }
+    
+    /**
+     * Check and merge split files for the current model
+     */
+    private fun checkAndMergeSplitFiles() {
+        try {
+            val configFile = File(configPath)
+            val modelDir = configFile.parentFile
+            
+            if (modelDir != null && modelDir.exists()) {
+                Log.d(TAG, "Checking for split files in model directory: ${modelDir.absolutePath}")
+                
+                if (FileSplitter.needsMerging(modelDir)) {
+                    Log.d(TAG, "Found split files that need merging in ${modelDir.absolutePath}")
+                    val success = FileSplitter.mergeAllSplitFiles(modelDir)
+                    if (success) {
+                        Log.d(TAG, "Successfully merged split files for model: $modelId")
+                    } else {
+                        Log.w(TAG, "Failed to merge some split files for model: $modelId")
+                    }
+                } else {
+                    Log.d(TAG, "No split files found for model: $modelId")
+                }
+            } else {
+                Log.w(TAG, "Model directory not found: ${modelDir?.absolutePath}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking/merging split files for model: $modelId", e)
         }
     }
 
@@ -248,17 +286,17 @@ class LlmSession (
 
 
 
-    // 新增：支持完整历史消息的公开方法
+    //New: public method supporting complete history messages
     fun submitFullHistory(
         history: List<Pair<String, String>>,
         progressListener: GenerateProgressListener
     ): HashMap<String, Any> {
         synchronized(this) {
-            // 使用 Timber 替代 Log
+            //Use Timber instead of Log
             Timber.d("MNN_DEBUG submitFullHistory with ${history.size} messages")
-            // 转换类型：kotlin.Pair -> android.util.Pair
+            //Type conversion: kotlin.Pair -> android.util.Pair
             val androidHistory = history.map { android.util.Pair(it.first, it.second) }
-            // 调用JNI方法，移除不必要的类型转换
+            //Call JNI method, remove unnecessary type conversion
             val result = submitFullHistoryNative(nativePtr, androidHistory, progressListener)
             generating = false
             return result
@@ -271,7 +309,7 @@ class LlmSession (
     ): HashMap<String, Any>
 
     fun modelId(): String {
-        //创建一个临时变量，避免修改原始的modelId
+        //Create temporary variable to avoid modifying original modelId
         return modelId
 
     }

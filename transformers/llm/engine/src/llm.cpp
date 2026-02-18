@@ -139,7 +139,7 @@ void Llm::setRuntimeHint(std::shared_ptr<Express::Executor::RuntimeManager> &rtg
         rtg->setExternalPath(tmpPath, MNN::Interpreter::EXTERNAL_WEIGHT_DIR);
     }
     // set npu model dir
-    rtg->setExternalPath(mConfig->npu_model_dir(), 3);
+    rtg->setExternalPath(mConfig->npu_model_dir(), MNN::Interpreter::EXTERNAL_NPU_FILE_DIR);
     auto dynamicOption = mConfig->dynamic_option();
     if (mConfig->dynamic_option()) {
         rtg->setHint(MNN::Interpreter::DYNAMIC_QUANT_OPTIONS, mConfig->dynamic_option());
@@ -274,6 +274,9 @@ bool Llm::load() {
     }
 
     mRuntimeManager->setExternalFile(mConfig->llm_weight());
+    if (mConfig->has_deepstack()) {
+        inputNames.emplace_back("deepstack_embeds");
+    }
     mModule.reset(Module::load(inputNames, outputNames, model_path.c_str(), mRuntimeManager, &module_config));
     mRuntimeManager->setExternalFile("");
     if(nullptr == mModule) {
@@ -337,7 +340,12 @@ Llm* Llm::create_lora(const std::string& lora_path) {
     auto llm = new Llm(std::make_shared<LlmConfig>(*mConfig));
     llm->set_config("{\"llm_model\": \"" + lora_path + "\", \"use_mmap\": false, \"use_cached_mmap\": false}");
     llm->mBaseModule = mModule.get();
-    llm->load();
+    auto res = llm->load();
+    if (!res) {
+        MNN_ERROR("[MNN:LLM] Load Lora error\n");
+        delete llm;
+        return nullptr;
+    }
     return llm;
 }
 
@@ -407,7 +415,7 @@ void Llm::setKVCacheInfo(size_t add, size_t remove, int* reserve, int n_reserve)
     mMeta->add = add;
 }
 
-std::vector<Express::VARP> Llm::forwardRaw(Express::VARP hiddenState, Express::VARP mask, Express::VARP inputPos) {
+std::vector<Express::VARP> Llm::forwardRaw(Express::VARP hiddenState, Express::VARP mask, Express::VARP inputPos, Express::VARPS extraArgs) {
     Express::VARP logitsIndex;
     bool inDecode = mContext->gen_seq_len > 0;
     bool isAllLogists = mConfig->all_logits() ? true : (inDecode ? mInSpec : false);
@@ -439,8 +447,9 @@ std::vector<Express::VARP> Llm::forwardRaw(Express::VARP hiddenState, Express::V
     mGenerateParam->outputs.clear();
     mGenerateParam->validLogitSize = 0;
     mGenerateParam->validLogitStart = 0;
-    std::vector<Express::VARP> outputs;
-    outputs = selectModule->onForward({hiddenState, mask, inputPos, logitsIndex});
+    std::vector<Express::VARP> inputs {hiddenState, mask, inputPos, logitsIndex};
+    inputs.insert(inputs.end(), extraArgs.begin(), extraArgs.end());
+    std::vector<Express::VARP> outputs = selectModule->onForward(inputs);
 
     if (outputs.empty()) {
         return outputs;
@@ -675,12 +684,19 @@ void Llm::eraseHistory(size_t begin, size_t end) {
         MNN_ERROR("MNN-LLM: erase history hasn't been executed by response, override erase info\n");
     }
     mMeta->remove = mMeta->previous - begin;
+    int revertNumber = 0;
     if (end != mMeta->previous) {
         mMeta->reserveHost.resize(2);
         mMeta->reserve = mMeta->reserveHost.data();
         mMeta->n_reserve = 1;
         mMeta->reserve[0] = end - begin;
         mMeta->reserve[1] = mMeta->previous - end;
+        revertNumber = mMeta->reserve[1];
+    }
+    mContext->all_seq_len = mMeta->previous - mMeta->remove + revertNumber;
+    // FIXME: support history_tokens erease the tokens with correct position
+    if(revertNumber == 0 && mMeta->remove <  mContext->history_tokens.size()){
+        mContext->history_tokens.resize(mContext->history_tokens.size() - mMeta->remove);
     }
 }
 
