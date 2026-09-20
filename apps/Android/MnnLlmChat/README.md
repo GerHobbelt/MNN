@@ -1,5 +1,5 @@
 # MNN Chat Android App
-[中文版本](./README_CN.md)
+[簡体中文版本](./README_CN.md) | [繁體中文版本](./README_TW.md)
 
 [Download](#releases)  [下载](./README_CN.md#releases)
 
@@ -61,6 +61,15 @@ This is our full multimodal language model (LLM) Android app
   ```
 
 # Releases
+
+## Version 0.8.3
++ Click here to [download](https://meta.alicdn.com/data/mnn/apks/mnn_chat_0_8_3.apk)
++ Highlights:
+  + Add Gemma 4 model entries, including multimodal E2B/E4B and vision 26B-A4B/31B variants.
+  + Add the LFM model family, covering LFM2/LFM2.5 text, task-specific, vision-language, audio, and MoE variants.
+  + Add Qwen3.5 Claude 4.6 Opus reasoning-distilled model entries.
++ Bugfix:
+  + Clean up Android native linking to match the bundled MNN runtime library packaging.
 
 ## Version 0.8.2.2
 + Click here to [download](https://meta.alicdn.com/data/mnn/apks/mnn_chat_0_8_2_2.apk)
