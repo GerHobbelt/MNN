@@ -109,7 +109,7 @@ bool Omni::load() {
         }
         config.backendConfig = &cpuBackendConfig;
         mProcessorRuntimeManager.reset(Executor::RuntimeManager::createRuntimeManager(config));
-        setRuntimeHint(mProcessorRuntimeManager);
+        setRuntimeHint(mProcessorRuntimeManager, true);
     }
     if (mConfig->has_talker()) {
         mTalker.reset(new Talker(mConfig, this));
@@ -130,6 +130,8 @@ bool Omni::load() {
         module_config.shapeMutable = true;
         module_config.rearrange    = true;
     }
+    // pMeta isolation between LLM and processor RTMs is now provided by
+    // per-RTM RuntimeAttr::mPMeta + applyMetaToRuntime; no manual reset needed.
     if (mConfig->is_visual()) {
         mVisionModule.reset(Module::load({}, {}, mConfig->visual_model().c_str(), mProcessorRuntimeManager, &module_config));
         if (nullptr == mVisionModule.get()) {
@@ -438,7 +440,7 @@ std::vector<int> Omni::qwen2VisionProcess(VARP image) {
                 idx_ptr[0 * num_patches + idx] = h_idx_floor * num_grid + w_idx_floor;
                 idx_ptr[1 * num_patches + idx] = h_idx_floor * num_grid + w_idx_ceil;
                 idx_ptr[2 * num_patches + idx] = h_idx_ceil * num_grid + w_idx_floor;
-                idx_ptr[3 * num_patches + idx] = h_idx_ceil * num_grid + w_idx_floor;
+                idx_ptr[3 * num_patches + idx] = h_idx_ceil * num_grid + w_idx_ceil;
                 weight_ptr[0 * num_patches + idx] = (1.0f - dh) * (1.0f - dw);
                 weight_ptr[1 * num_patches + idx] = (1.0f - dh) * dw;
                 weight_ptr[2 * num_patches + idx] = dh * (1.0f - dw);
@@ -792,6 +794,12 @@ std::vector<int> Omni::visionProcess(VARP image) {
     } else {
         imgIds = defaultVisionProcess(image);
     }
+    bool async = mConfig->config_.value("async", true);
+    if (!async) {
+        for (auto& embd : mVisionEmbeddings) {
+            embd->readMap<float>();
+        }
+    }
     mContext->vision_us += _t.durationInUs();
     mContext->pixels_mp += (mVisionWidth / 1000.0f) * (mVisionHeight / 1000.0f);
     // set vision number for image idx
@@ -850,6 +858,7 @@ std::vector<int> Omni::audioProcess(MNN::Express::VARP waveform) {
         ::memcpy(fresh->writeMap<float>(), ptr, info->size * sizeof(float));
         input_features = fresh;
     }
+    // pMeta isolation handled by per-RTM RuntimeAttr::mPMeta; no reset needed.
     VARP audio_embedding;
     if (mAudioModule->getInfo()->inputNames.size() > 1) {
         int seqlen = UP_DIV(input_features->getInfo()->dim[2], 2);
@@ -896,6 +905,12 @@ std::vector<int> Omni::audioProcess(MNN::Express::VARP waveform) {
     }
     mContext->audio_us = _t.durationInUs();
     mAudioEmbeddings.push_back(audio_embedding);
+    bool async = mConfig->config_.value("async", true);
+    if (!async) {
+        for (auto& embd : mAudioEmbeddings) {
+            embd->readMap<float>();
+        }
+    }
     int embed_len = audio_embedding->getInfo()->dim[0];
     addPositionIds(embed_len);
     std::vector<int> audio_ids(embed_len, mAudioPad);

@@ -85,6 +85,9 @@ void Llm::setChatTemplate() {
         }
         mTokenizer->set_chat_template(jinja["chat_template"].get<std::string>(), jinja.value("eos", ""), context);
     }
+    if (jinja.contains("context")) {
+        mTokenizer->set_chat_template_context(jinja["context"].dump());
+    }
 }
 
 bool Llm::set_config(const std::string& content) {
@@ -120,7 +123,7 @@ void Llm::setDebugCallback(MNN::TensorCallBackWithInfo&& before, MNN::TensorCall
     mExecutor->setCallBack(std::move(before), std::move(after));
 }
 
-void Llm::setRuntimeHint(std::shared_ptr<Express::Executor::RuntimeManager> &rtg) {
+void Llm::setRuntimeHint(std::shared_ptr<Express::Executor::RuntimeManager> &rtg, bool mllm) {
     rtg->setHint(MNN::Interpreter::INIT_THREAD_NUMBER, 4);
 
     rtg->setHint(MNN::Interpreter::MEM_ALLOCATOR_TYPE, 0);
@@ -151,7 +154,7 @@ void Llm::setRuntimeHint(std::shared_ptr<Express::Executor::RuntimeManager> &rtg
     rtg->setHint(MNN::Interpreter::DYNAMIC_QUANT_OPTIONS, mConfig->config_.value("dynamic_option", 0));
 
     rtg->setHintPtr(Interpreter::KVCACHE_INFO, mMeta.get());
-    if (backend_type_convert(mConfig->backend_type()) != 0) { // not cpu
+    if (backend_type_convert(mConfig->backend_type(mllm)) != 0) { // not cpu
         std::string cacheFilePath = tmpPath.length() != 0 ? tmpPath : ".";
         rtg->setCache(cacheFilePath + "/mnn_cachefile.bin");
     }
@@ -823,6 +826,10 @@ void Llm::generate(int max_token) {
     if (is_stop(mContext->current_token)) {
         return;
     }
+    // Enable record queue during decode for better performance
+    if (mConfig->backend_type() == "opencl") {
+        mRuntimeManager->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, 512);
+    }
     mGenerateParam->max_new_tokens = max_token;
     mGenerationStrategy->generate(*mGenerateParam);
 }
@@ -937,6 +944,10 @@ std::vector<int> Llm::generate(MNN::Express::VARP input_embeds, int max_tokens) 
     int seqLen = input_embeds->getInfo()->dim[mSeqLenIndex];
     mContext->prompt_len = seqLen;
 
+    // Disable record queue during prefill for better performance
+    if (mConfig->backend_type() == "opencl") {
+        mRuntimeManager->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, 0);
+    }
     Timer _t;
     auto outputs = forwardVec(input_embeds);
     if(mGenerateParam->outputs.size() < 1) {
@@ -946,6 +957,20 @@ std::vector<int> Llm::generate(MNN::Express::VARP input_embeds, int max_tokens) 
     updateContext(seqLen, 0);
     mContext->prefill_us += _t.durationInUs();
     MNN::Express::ExecutorScope::Current()->gc(); // after prefill
+
+    // Clear file_flag after prefill, before the decode loop. Otherwise each
+    // L=1 decode step re-enters op-level PendingWrite and overwrites the
+    // on-disk prefix with post-decode state.
+    //
+    // The max_tokens > 0 gate distinguishes the two call paths:
+    //   non-chunked (max_tokens > 0, prefill+decode in one call): clear here
+    //   chunked (max_tokens == 0 per chunk): don't clear — chunks 2..N must
+    //   keep writing; completePrefixWrite() in the caller clears after the loop.
+    if (mPrefixCacheMode && mCallIndex == 1 && mMeta->file_flag == KVMeta::PendingWrite && max_tokens > 0) {
+        mMeta->file_name = "";
+        mMeta->file_flag = KVMeta::NoChange;
+        mMeta->layer_index = 0;
+    }
 
     // prefix cache mode and response second time
     if(mPrefixCacheMode && mCallIndex == 2) {
@@ -989,6 +1014,10 @@ std::vector<int> Llm::generate(MNN::Express::VARP input_embeds, int max_tokens) 
     }
     // call generation function
     if (0 < max_tokens) {
+        // Enable record queue during decode for better performance
+        if (mConfig->backend_type() == "opencl") {
+            mRuntimeManager->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, 512);
+        }
         mGenerateParam->max_new_tokens = max_tokens;
         mGenerationStrategy->generate(*mGenerateParam);
     }
@@ -1199,6 +1228,16 @@ std::vector<Express::VARP> Llm::getOutputs() const {
 }
 
 bool Llm::setPrefixCacheFile(const std::string& filename, int flag) {
+    // Prefix cache requires kvcache_mmap. Without it mKVCacheDir is unset and
+    // the disk-backed alloc in CPUKVCacheManager::onAlloc crashes with a
+    // nullptr mmap. Reject up-front instead of crashing deep in the backend.
+    if (!mConfig->kvcache_mmap()) {
+        MNN_ERROR(
+            "setPrefixCacheFile requires kvcache_mmap=true in config. "
+            "Prefix cache is a disk-backed feature; please enable kvcache_mmap.\n");
+        return false;
+    }
+
     mPrefixCacheFileName = filename;
     mCallIndex = 0;
     mPrefixCacheMode = true;
@@ -1224,6 +1263,11 @@ bool Llm::setPrefixCacheFile(const std::string& filename, int flag) {
     // actual data files were deleted / truncated / partially written, which would otherwise
     // lead to a crash in CPUKVCacheManager::onAlloc (e.g. memset on a null mmap address).
     if (mIsPrefixFileExist) {
+        // Only "mix" (LA + regular attention) has intrinsically non-uniform
+        // per-layer KV sizes. Everything else (full / sliding / unset → "full")
+        // stays under the cross-layer uniformity check that catches partial or
+        // corrupted writes.
+        const bool isHybrid = (mConfig->attention_type() == "mix");
         size_t refKeySize = 0;
         size_t refValueSize = 0;
         for (int i = 0; i < mConfig->layer_nums(); i++) {
@@ -1249,17 +1293,19 @@ bool Llm::setPrefixCacheFile(const std::string& filename, int flag) {
                 mIsPrefixFileExist = false;
                 break;
             }
-            if (i == 0) {
-                refKeySize = kSize;
-                refValueSize = vSize;
-            } else if (kSize != refKeySize || vSize != refValueSize) {
-                // All layers share the same model shape, so their .k (and .v) files must
-                // have identical sizes. Any mismatch means the cache directory has been
-                // corrupted / partially overwritten and must be rebuilt.
-                MNN_PRINT("Prefix cache size mismatch at layer %d: k=%zu(ref=%zu) v=%zu(ref=%zu)\n", i, kSize,
-                          refKeySize, vSize, refValueSize);
-                mIsPrefixFileExist = false;
-                break;
+            if (!isHybrid) {
+                if (i == 0) {
+                    refKeySize = kSize;
+                    refValueSize = vSize;
+                } else if (kSize != refKeySize || vSize != refValueSize) {
+                    // Non-hybrid: all layers share the same model shape, so their .k (and .v)
+                    // files must have identical sizes. Any mismatch means the cache directory
+                    // has been corrupted / partially overwritten and must be rebuilt.
+                    MNN_PRINT("Prefix cache size mismatch at layer %d: k=%zu(ref=%zu) v=%zu(ref=%zu)\n", i, kSize,
+                              refKeySize, vSize, refValueSize);
+                    mIsPrefixFileExist = false;
+                    break;
+                }
             }
         }
     }

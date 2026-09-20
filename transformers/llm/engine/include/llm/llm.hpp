@@ -195,7 +195,7 @@ public:
 protected:
     void setChatTemplate();
     void initRuntime();
-    void setRuntimeHint(std::shared_ptr<Express::Executor::RuntimeManager> &rtg);
+    void setRuntimeHint(std::shared_ptr<Express::Executor::RuntimeManager> &rtg, bool mllm = false);
     std::shared_ptr<LlmContext> mContext;
     std::shared_ptr<KVMeta> mMeta;
     std::shared_ptr<LlmConfig> mConfig;
@@ -225,6 +225,7 @@ protected:
     friend class LookaheadGeneration;
     friend class MtpGeneration;
     friend class EagleGeneration;
+    friend class DFlashGeneration;
     friend class Omni;
     std::vector<Express::VARP> forwardVec(const std::vector<int>& input_ids);
     std::vector<Express::VARP> forwardVec(MNN::Express::VARP input_embeds);
