@@ -782,11 +782,15 @@ void CPUKVCacheManager::ProcessValue(const Tensor* value, int seqLen, int kvHead
     const bool valueC4 = TensorUtils::getDescribe(value)->dimensionFormat == MNN_DATA_FORMAT_NC4HW4;
     const int pack = static_cast<CPUBackend*>(mBackend)->functions()->pack;
     const auto valueSrc = value->host<T>();
+    int totalChannel = mKvNumHead * mHeadDim;
     auto loadValue = [&](int token, int channel) {
         if (valueC4) {
+            if (seqLen == 1) {
+                return valueSrc[channel];
+            }
             return valueSrc[c4Offset(token, channel, seqLen, pack)];
         }
-        return valueSrc[token * mKvNumHead * mHeadDim + channel];
+        return valueSrc[token * totalChannel + channel];
     };
     const int channelBase = kvHead * mHeadDim;
     if ((mValueQuantMode == KVQuantMode::TQ3) || (mValueQuantMode == KVQuantMode::TQ4)) {

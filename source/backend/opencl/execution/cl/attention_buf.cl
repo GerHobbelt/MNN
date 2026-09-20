@@ -72,6 +72,80 @@ static inline FLOAT4 load_c4_value4(__global const FLOAT* value,
 }
 #endif
 
+#ifdef ATTENTION_C4
+static inline void store_attention_c4_4(__global FLOAT* output, const FLOAT4 value, const int seq_storage,
+                                        const int token, const int channel, const int count) {
+    if (((channel & 3) == 0) && count == 4) {
+        const int offset = ((channel >> 2) * seq_storage + token) * 4;
+        vstore4(value, 0, output + offset);
+        return;
+    }
+    int c = channel;
+    output[((c >> 2) * seq_storage + token) * 4 + (c & 3)] = value.x;
+    if (count > 1) {
+        c = channel + 1;
+        output[((c >> 2) * seq_storage + token) * 4 + (c & 3)] = value.y;
+    }
+    if (count > 2) {
+        c = channel + 2;
+        output[((c >> 2) * seq_storage + token) * 4 + (c & 3)] = value.z;
+    }
+    if (count > 3) {
+        c = channel + 3;
+        output[((c >> 2) * seq_storage + token) * 4 + (c & 3)] = value.w;
+    }
+}
+
+static inline void store_attention_c4_8(__global FLOAT* output, const FLOAT8 value, const int seq_storage,
+                                        const int token, const int channel, const int count) {
+    const int low_count = min(count, 4);
+    store_attention_c4_4(output, value.lo, seq_storage, token, channel, low_count);
+    if (count > 4) {
+        store_attention_c4_4(output, value.hi, seq_storage, token, channel + 4, count - 4);
+    }
+}
+#endif
+
+// Store the first `count` (<=4) components of a FLOAT4 to contiguous addresses without vector subscript.
+static inline void store_scalar4(__global FLOAT* output, const int base, const FLOAT4 value, const int count) {
+    output[base] = value.x;
+    if (count > 1) {
+        output[base + 1] = value.y;
+    }
+    if (count > 2) {
+        output[base + 2] = value.z;
+    }
+    if (count > 3) {
+        output[base + 3] = value.w;
+    }
+}
+
+// Store the first `count` (<=8) components of a FLOAT8 to contiguous addresses without vector subscript.
+static inline void store_scalar8(__global FLOAT* output, const int base, const FLOAT8 value, const int count) {
+    output[base] = value.s0;
+    if (count > 1) {
+        output[base + 1] = value.s1;
+    }
+    if (count > 2) {
+        output[base + 2] = value.s2;
+    }
+    if (count > 3) {
+        output[base + 3] = value.s3;
+    }
+    if (count > 4) {
+        output[base + 4] = value.s4;
+    }
+    if (count > 5) {
+        output[base + 5] = value.s5;
+    }
+    if (count > 6) {
+        output[base + 6] = value.s6;
+    }
+    if (count > 7) {
+        output[base + 7] = value.s7;
+    }
+}
+
 
 __kernel void rearrange_qkv(GLOBAL_SIZE_3_DIMS
                               __global const FLOAT *input_q, //[batch, seqLenQ/4, headNum, headDim, seqLenQ_4]
@@ -296,35 +370,53 @@ __kernel void rearrange_mask(GLOBAL_SIZE_3_DIMS
 
 __kernel void qkv_transpose_output(GLOBAL_SIZE_3_DIMS
           __global const FLOAT *input, // [Batch * mNumHead, ROUND_UP(mHeadDim, mTileHDN), ROUND_UP(seqLen, mTileQ)]
-          __global FLOAT *output, // [Batch, seqLen/4, mNumHead， mHeadDim, 4]
+          __global FLOAT *output, // [Batch, seqLen/4, mNumHead， mHeadDim, 4]  (or NC4HW4 when ATTENTION_C4)
           __private const int tile_q,
           __private const int tile_hdn,
           __private const int seq_len,
           __private const int head_num,
-          __private const int head_dim
+          __private const int head_dim,
+          __private const int batch
 ) {
-    
+
     const int sl = get_global_id(0); // seqLen_4
     const int hd = get_global_id(1); // mHeadDim_4
     const int z = get_global_id(2); // Batch * mNumHead
     DEAL_NON_UNIFORM_DIM3(sl, hd, z);
-    
+
     const int b = z / head_num;
     const int hn = z % head_num;
-        
+
     const int seq_len_pack = ((seq_len + tile_q - 1) / tile_q) * tile_q;
     const int head_dim_pack = ((head_dim + tile_hdn - 1) / tile_hdn) * tile_hdn;
-    
+
     const int offset_inp = ((b * head_num + hn) * head_dim_pack + 4 * hd) * seq_len_pack + 4 * sl;
-    
-    const int offset_out = (((b * seq_len + sl*4) * head_num + hn) * head_dim + 4 * hd);
-    
+
     // Q
     FLOAT4 temp_0 = vload4(0, input + offset_inp);
     FLOAT4 temp_1 = vload4(0, input + offset_inp + seq_len_pack);
     FLOAT4 temp_2 = vload4(0, input + offset_inp + 2 * seq_len_pack);
     FLOAT4 temp_3 = vload4(0, input + offset_inp + 3 * seq_len_pack);
-    
+
+#ifdef ATTENTION_C4
+    // output is NC4HW4: [(head_num*head_dim)/4, batch*seq_len, 4].
+    const int channel = hn * head_dim + 4 * hd;
+    const int channel_count = min(4, head_dim - 4 * hd);
+    const int seq_storage = seq_len * batch;
+    int token = b * seq_len + sl * 4;
+    store_attention_c4_4(output, (FLOAT4)(temp_0.s0, temp_1.s0, temp_2.s0, temp_3.s0), seq_storage, token,
+                         channel, channel_count);
+    if(4 * sl + 1 >= seq_len) return;
+    store_attention_c4_4(output, (FLOAT4)(temp_0.s1, temp_1.s1, temp_2.s1, temp_3.s1), seq_storage, ++token,
+                         channel, channel_count);
+    if(4 * sl + 2 >= seq_len) return;
+    store_attention_c4_4(output, (FLOAT4)(temp_0.s2, temp_1.s2, temp_2.s2, temp_3.s2), seq_storage, ++token,
+                         channel, channel_count);
+    if(4 * sl + 3 >= seq_len) return;
+    store_attention_c4_4(output, (FLOAT4)(temp_0.s3, temp_1.s3, temp_2.s3, temp_3.s3), seq_storage, ++token,
+                         channel, channel_count);
+#else
+    const int offset_out = (((b * seq_len + sl*4) * head_num + hn) * head_dim + 4 * hd);
     vstore4((FLOAT4)(temp_0.s0, temp_1.s0, temp_2.s0, temp_3.s0), 0, output + offset_out);
     if(4 * sl + 1 >= seq_len) return;
     vstore4((FLOAT4)(temp_0.s1, temp_1.s1, temp_2.s1, temp_3.s1), 0, output + offset_out + head_num*head_dim);
@@ -332,6 +424,7 @@ __kernel void qkv_transpose_output(GLOBAL_SIZE_3_DIMS
     vstore4((FLOAT4)(temp_0.s2, temp_1.s2, temp_2.s2, temp_3.s2), 0, output + offset_out + 2*head_num*head_dim);
     if(4 * sl + 3 >= seq_len) return;
     vstore4((FLOAT4)(temp_0.s3, temp_1.s3, temp_2.s3, temp_3.s3), 0, output + offset_out + 3*head_num*head_dim);
+#endif
 
 }
 
@@ -791,32 +884,44 @@ __kernel void matmul_qkv_prefill(GLOBAL_SIZE_3_DIMS
     }
     
 #ifdef ATTENTION_C4
-    int output_offset = (z * head_dim + x8) * query_seq_len * batch + (b * query_seq_len + y4) * 4;
-    const int stride = query_seq_len * batch * 4;
-    vstore4(CONVERT_FLOAT4(out0.lo), 0, output + output_offset);
-    vstore4(CONVERT_FLOAT4(out0.hi), 0, output + output_offset + stride);
+    const int channel = z * head_dim + x8;
+    const int channel_count = min(8, head_dim - x8);
+    const int seq_storage = query_seq_len * batch;
+    int token = b * query_seq_len + y4;
+    store_attention_c4_8(output, CONVERT_FLOAT8(out0), seq_storage, token, channel, channel_count);
     if(y4 + 1 >= query_seq_len) return;
-    output_offset += 4;
-    vstore4(CONVERT_FLOAT4(out1.lo), 0, output + output_offset);
-    vstore4(CONVERT_FLOAT4(out1.hi), 0, output + output_offset + stride);
+    store_attention_c4_8(output, CONVERT_FLOAT8(out1), seq_storage, ++token, channel, channel_count);
     if(y4 + 2 >= query_seq_len) return;
-    output_offset += 4;
-    vstore4(CONVERT_FLOAT4(out2.lo), 0, output + output_offset);
-    vstore4(CONVERT_FLOAT4(out2.hi), 0, output + output_offset + stride);
+    store_attention_c4_8(output, CONVERT_FLOAT8(out2), seq_storage, ++token, channel, channel_count);
     if(y4 + 3 >= query_seq_len) return;
-    output_offset += 4;
-    vstore4(CONVERT_FLOAT4(out3.lo), 0, output + output_offset);
-    vstore4(CONVERT_FLOAT4(out3.hi), 0, output + output_offset + stride);
+    store_attention_c4_8(output, CONVERT_FLOAT8(out3), seq_storage, ++token, channel, channel_count);
 #else
     const int output_offset = ((b * query_seq_len + y4) * head_num + z) * head_dim + x8;
     const int stride = head_num * head_dim;
-    vstore8(CONVERT_FLOAT8(out0), 0, output + output_offset);
+    const int channel_count = min(8, head_dim - x8);
+    if (channel_count == 8) {
+        vstore8(CONVERT_FLOAT8(out0), 0, output + output_offset);
+    } else {
+        store_scalar8(output, output_offset, CONVERT_FLOAT8(out0), channel_count);
+    }
     if(y4 + 1 >= query_seq_len) return;
-    vstore8(CONVERT_FLOAT8(out1), 0, output + output_offset + stride);
+    if (channel_count == 8) {
+        vstore8(CONVERT_FLOAT8(out1), 0, output + output_offset + stride);
+    } else {
+        store_scalar8(output, output_offset + stride, CONVERT_FLOAT8(out1), channel_count);
+    }
     if(y4 + 2 >= query_seq_len) return;
-    vstore8(CONVERT_FLOAT8(out2), 0, output + output_offset + stride + stride);
+    if (channel_count == 8) {
+        vstore8(CONVERT_FLOAT8(out2), 0, output + output_offset + stride + stride);
+    } else {
+        store_scalar8(output, output_offset + stride + stride, CONVERT_FLOAT8(out2), channel_count);
+    }
     if(y4 + 3 >= query_seq_len) return;
-    vstore8(CONVERT_FLOAT8(out3), 0, output + output_offset + stride + stride + stride);
+    if (channel_count == 8) {
+        vstore8(CONVERT_FLOAT8(out3), 0, output + output_offset + stride + stride + stride);
+    } else {
+        store_scalar8(output, output_offset + stride + stride + stride, CONVERT_FLOAT8(out3), channel_count);
+    }
 #endif
 }
 
@@ -893,7 +998,16 @@ __kernel void matmul_qkv_decode_b8(GLOBAL_SIZE_2_DIMS
     #endif
     
     const int output_offset = y * head_dim + x8;
-    vstore8(CONVERT_FLOAT8(out0), 0, output + output_offset);
+    const int channel_count = min(8, head_dim - x8);
+#ifdef ATTENTION_C4
+    store_attention_c4_8(output, CONVERT_FLOAT8(out0), 1, 0, output_offset, channel_count);
+#else
+    if (channel_count == 8) {
+        vstore8(CONVERT_FLOAT8(out0), 0, output + output_offset);
+    } else {
+        store_scalar8(output, output_offset, CONVERT_FLOAT8(out0), channel_count);
+    }
+#endif
 }
 
 __kernel void matmul_qkv_decode_b4(GLOBAL_SIZE_2_DIMS
@@ -968,5 +1082,14 @@ __kernel void matmul_qkv_decode_b4(GLOBAL_SIZE_2_DIMS
     #endif
     
     const int output_offset = y * head_dim + x4;
-    vstore4(CONVERT_FLOAT4(out0), 0, output + output_offset);
+    const int channel_count = min(4, head_dim - x4);
+#ifdef ATTENTION_C4
+    store_attention_c4_4(output, CONVERT_FLOAT4(out0), 1, 0, output_offset, channel_count);
+#else
+    if (channel_count == 4) {
+        vstore4(CONVERT_FLOAT4(out0), 0, output + output_offset);
+    } else {
+        store_scalar4(output, output_offset, CONVERT_FLOAT4(out0), channel_count);
+    }
+#endif
 }

@@ -14,7 +14,8 @@ with open(sys.argv[1]) as f:
     post_treat = json.load(f)
 soc_id = int(sys.argv[2])
 dsp_arch = sys.argv[3]
-print('soc_id:', soc_id, "; dsp_arch:", dsp_arch)
+vtcm_mb = int(sys.argv[4])
+print('soc_id:', soc_id, "; dsp_arch:", dsp_arch, "; vtcm_mb:", vtcm_mb)
 qnn_bin_path = os.path.join(qnn_sdk, 'bin', 'x86_64-linux-clang')
 qnnModelLibGenerator = os.path.join(qnn_bin_path, 'qnn-model-lib-generator')
 qnnContextBinaryGenerator = os.path.join(qnn_bin_path, 'qnn-context-binary-generator')
@@ -83,7 +84,7 @@ def process_src(task):
         "-t", "x86_64-linux-clang",
         "-o", workdir,
     ]
-    compile_result = run_subprocess(compile_cmd, retries=3)
+    compile_result = run_subprocess(compile_cmd, cwd=workdir, retries=3)
     if compile_result.returncode != 0:
         raise RuntimeError(f"Compile failed for src={src}: {' '.join(compile_cmd)}")
 
@@ -110,7 +111,7 @@ htp_so = os.path.join(qnn_sdk, 'lib','x86_64-linux-clang','libQnnHtp.so')
 htp_backend_extensions = {
     "graphs": [
         {
-            "vtcm_mb": 8,
+            "vtcm_mb": vtcm_mb,
             "O": 3.0,
             "fp16_relaxed_precision": 1,
             "hvx_threads": 4

@@ -7,12 +7,19 @@
 //
 
 #import "backend/metal/MetalConvolution1x1.hpp"
+#import "backend/metal/MetalEnv.hpp"
 #import "core/Macro.h"
 #import "backend/metal/MetalBackend.hpp"
 #import "backend/metal/MetalSharedGather.hpp"
 #import "ConvSimdGroupShader.hpp"
 
 #if MNN_METAL_ENABLED
+
+#if MNN_METAL_OP_PROFILE
+#define CONV1X1_SET_TAG(name) mProfileTag = (name)
+#else
+#define CONV1X1_SET_TAG(name) do {} while(0)
+#endif
 
 namespace MNN {
 bool MetalConvolution1x1::isValid(const Convolution2D *conv, const Tensor *input) {
@@ -63,14 +70,198 @@ bool MetalConvolution1x1::onClone(Backend* bn, const Op* op, Execution** dst) {
         auto conv2D = mOp->main_as_Convolution2D();
         int oc = conv2D->common()->outputCount();
         *dst = new MetalSharedGather(bn, oc, mWeight, mDequantScaleBias, mDequantBits, mScaleCoef);
+        MNN_METAL_PROFILE_REGISTER_CLONE(bn, op, *dst);
         return true;
     }
     *dst = new MetalConvolution1x1(bn, op, mWeight, mBias, mDequantScaleBias, mDequantBits, mScaleCoef);
+    MNN_METAL_PROFILE_REGISTER_CLONE(bn, op, *dst);
     return true;
+}
+
+bool MetalConvolution1x1::setupGateUpFusion(MetalConvolution1x1* peer, const Tensor* peerOutput) {
+    if (!mIs2sgDecode || !peer->mIs2sgDecode) {
+        return false;
+    }
+    // Leader = gate (this), Follower = up (peer)
+    mIsGateUpLeader = true;
+    mGateUpPeer = peer;
+    mGateUpPeerOutput = peerOutput;
+    peer->mIsGateUpFollower = true;
+
+    // Build fused pipeline with GATE_UP_FUSED macro
+    auto backend = static_cast<MetalBackend *>(this->backend());
+    auto context = (__bridge MNNMetalContext *)backend->context();
+
+    // Store up's scale_coef separately: gate uses cst.scale_coef (via buffer(2)),
+    // but up needs its own tensor-specific coefficient. Without this, up's dequant
+    // is scaled by gate's coefficient and any range mismatch drifts decode into
+    // garbage on models like Qwen3.5-2B.
+    mGateUpSegBuffer = backend->getConstBuffer(sizeof(float));
+    ((float *)mGateUpSegBuffer.contents)[0] = peer->mScaleCoef;
+    MetalRuntime* rt = (MetalRuntime *)backend->runtime();
+
+    std::string ftype4 = backend->useFp16InsteadFp32() ? "half4" : "float4";
+    std::vector<std::string> keys = {ftype4, "MNN_METAL_FLOAT32_COMPUTER"};
+    if (backend->useFp16InsteadFp32()) {
+        keys.emplace_back("MNN_METAL_FLOAT16_STORAGE");
+    }
+    if (mDequantBits == 4) {
+        keys.emplace_back("conv1x1_wquant_4");
+    } else if (mDequantBits == 8) {
+        keys.emplace_back("conv1x1_wquant_8");
+    }
+    keys.emplace_back("conv1x1_wquant_sg_reduce");
+    keys.emplace_back("conv1x1_gemv_g4m1_2sg_wquant_sg");
+    keys.emplace_back("GATE_UP_FUSED");
+
+    mGateUpFusedPipeline = rt->findPipeline(keys);
+    if (nil == mGateUpFusedPipeline) {
+        std::string ftype = backend->useFp16InsteadFp32() ? "half" : "float";
+        std::string ftype2 = backend->useFp16InsteadFp32() ? "half2" : "float2";
+        std::string ftype2x4 = backend->useFp16InsteadFp32() ? "half2x4" : "float2x4";
+        std::string ftype4x4 = backend->useFp16InsteadFp32() ? "half4x4" : "float4x4";
+
+        MTLCompileOptions *option = [[MTLCompileOptions alloc] init];
+        auto dic = [NSMutableDictionary dictionaryWithCapacity:0];
+        [dic setValue:@(ftype.c_str()) forKey:@"ftype"];
+        [dic setValue:@(ftype2.c_str()) forKey:@"ftype2"];
+        [dic setValue:@(ftype4.c_str()) forKey:@"ftype4"];
+        [dic setValue:@(ftype2x4.c_str()) forKey:@"ftype2x4"];
+        [dic setValue:@(ftype4x4.c_str()) forKey:@"ftype4x4"];
+        [dic setValue:@"1" forKey:@"MNN_METAL_FLOAT32_COMPUTER"];
+        if (backend->useFp16InsteadFp32()) {
+            [dic setValue:@"1" forKey:@"MNN_METAL_FLOAT16_STORAGE"];
+        }
+        if (mDequantBits == 4) {
+            [dic setValue:@"1" forKey:@"W_QUANT_4"];
+        } else if (mDequantBits == 8) {
+            [dic setValue:@"1" forKey:@"W_QUANT_8"];
+        }
+        [dic setValue:@"1" forKey:@"GATE_UP_FUSED"];
+        option.preprocessorMacros = dic;
+
+        std::string sgrWqStr = std::string(gBasicConvPrefix) + gConv1x1WqSgReduce;
+        mGateUpFusedPipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), "conv1x1_gemv_g4m1_2sg_wquant_sg", option);
+        rt->insertPipeline(keys, mGateUpFusedPipeline);
+    }
+
+    if (nil == mGateUpFusedPipeline) {
+        // Compilation failed, revert fusion
+        mIsGateUpLeader = false;
+        mGateUpPeer = nullptr;
+        mGateUpSegBuffer = nil;
+        peer->mIsGateUpFollower = false;
+        return false;
+    }
+
+    // Update grid: add z=2 dimension for gate/up selection
+    auto gridSize = mThreads.first;
+    mThreads.first = MTLSizeMake(gridSize.width, gridSize.height, 2);
+
+    return true;
+}
+
+bool MetalConvolution1x1::setupLNFusion(const Tensor* hiddenInput, const Tensor* residualInput,
+                                        const Tensor* residualOutput, std::shared_ptr<Tensor> gamma, float eps) {
+    if (!mIs2sgDecode) {
+        return false;
+    }
+
+    mLNHiddenInput = hiddenInput;
+    mLNResidualInput = residualInput;
+    mLNResidualOutput = residualOutput;
+    mLNGamma = gamma;
+    mHasLNFusion = true;
+
+    auto backend = static_cast<MetalBackend *>(this->backend());
+    MetalRuntime* rt = (MetalRuntime *)backend->runtime();
+    mLNEpsBuffer = backend->getConstBuffer(sizeof(float));
+    *((float *)mLNEpsBuffer.contents) = eps;
+
+    std::string ftype = backend->useFp16InsteadFp32() ? "half" : "float";
+    std::string ftype2 = backend->useFp16InsteadFp32() ? "half2" : "float2";
+    std::string ftype4 = backend->useFp16InsteadFp32() ? "half4" : "float4";
+    std::string ftype2x4 = backend->useFp16InsteadFp32() ? "half2x4" : "float2x4";
+    std::string ftype4x4 = backend->useFp16InsteadFp32() ? "half4x4" : "float4x4";
+
+    std::vector<std::string> keys = {ftype4, "MNN_METAL_FLOAT32_COMPUTER"};
+    if (backend->useFp16InsteadFp32()) {
+        keys.emplace_back("MNN_METAL_FLOAT16_STORAGE");
+    }
+    if (mDequantBits == 4) {
+        keys.emplace_back("conv1x1_wquant_4");
+    } else if (mDequantBits == 8) {
+        keys.emplace_back("conv1x1_wquant_8");
+    }
+    keys.emplace_back("conv1x1_wquant_sg_reduce");
+    keys.emplace_back("conv1x1_gemv_g4m1_2sg_wquant_sg");
+    if (mIsGateUpLeader) {
+        keys.emplace_back("GATE_UP_FUSED");
+    }
+    keys.emplace_back("LN_FUSED");
+
+    mLNFusedPipeline = rt->findPipeline(keys);
+    if (nil == mLNFusedPipeline) {
+        MTLCompileOptions *option = [[MTLCompileOptions alloc] init];
+        auto dic = [NSMutableDictionary dictionaryWithCapacity:0];
+        [dic setValue:@(ftype.c_str()) forKey:@"ftype"];
+        [dic setValue:@(ftype2.c_str()) forKey:@"ftype2"];
+        [dic setValue:@(ftype4.c_str()) forKey:@"ftype4"];
+        [dic setValue:@(ftype2x4.c_str()) forKey:@"ftype2x4"];
+        [dic setValue:@(ftype4x4.c_str()) forKey:@"ftype4x4"];
+        [dic setValue:@"1" forKey:@"MNN_METAL_FLOAT32_COMPUTER"];
+        if (backend->useFp16InsteadFp32()) {
+            [dic setValue:@"1" forKey:@"MNN_METAL_FLOAT16_STORAGE"];
+        }
+        if (mDequantBits == 4) {
+            [dic setValue:@"1" forKey:@"W_QUANT_4"];
+        } else if (mDequantBits == 8) {
+            [dic setValue:@"1" forKey:@"W_QUANT_8"];
+        }
+        if (mIsGateUpLeader) {
+            [dic setValue:@"1" forKey:@"GATE_UP_FUSED"];
+        }
+        [dic setValue:@"1" forKey:@"LN_FUSED"];
+        option.preprocessorMacros = dic;
+
+        std::string sgrWqStr = std::string(gBasicConvPrefix) + gConv1x1WqSgReduce;
+        mLNFusedPipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), "conv1x1_gemv_g4m1_2sg_wquant_sg", option);
+        rt->insertPipeline(keys, mLNFusedPipeline);
+    }
+
+    if (nil == mLNFusedPipeline) {
+        mHasLNFusion = false;
+        return false;
+    }
+    return true;
+}
+
+void MetalConvolution1x1::bindLNBuffers(id<MTLComputeCommandEncoder> encoder) {
+    MetalBackend::setTensor(mLNResidualInput, encoder, 20);
+    MetalBackend::setTensor(mLNGamma.get(), encoder, 21);
+    MetalBackend::setTensor(mLNResidualOutput, encoder, 22);
+    [encoder setBuffer:mLNEpsBuffer offset:0 atIndex:23];
 }
 
 ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs) {
     MetalConvolutionCommon::onResize(inputs, outputs);
+
+    // Reset Gate/Up fusion state on each resize
+    mIs2sgDecode = false;
+    mIsGateUpLeader = false;
+    mIsGateUpFollower = false;
+    mGateUpPeer = nullptr;
+    mGateUpFusedPipeline = nil;
+    mGateUpSegBuffer = nil;
+
+
+    mHasLNFusion = false;
+    mLNFusedPipeline = nil;
+    mLNHiddenInput = nullptr;
+    mLNResidualInput = nullptr;
+    mLNResidualOutput = nullptr;
+    mLNGamma = nullptr;
+    mLNEpsBuffer = nil;
 
     // prepare
     // For C4NHW4 format, NHW can be fuse to W
@@ -154,7 +345,54 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
     if ((mDequantBits == 2 || mDequantBits == 3) && area > 1 && rt->supportSimdGroupMatrix()) {
         dequantInShader = false;
     }
+    // Tensor API vs in-shader sg_matrix path for prefill (area > 1) with Q4/Q8.
+    //
+    // Default on M5+ (tensor API devices): route to outer-dequant + tensor API
+    // GEMM (conv1x1_gemm_32x64_split_k_sg with USE_METAL_TENSOR_OPS).
+    //
+    // Measurement (M5, Qwen3-4B pp512, W4-block32, fp16, 4 threads):
+    //   default (tensor API):  698 tok/s
+    //   forced in-shader:      361 tok/s  (-48% — massive regression)
+    //   llama.cpp Q4_0:       1039 tok/s (MNN gap: 33% behind)
+    //
+    // Tested the in-shader sg_matrix route on M5 and it
+    // regresses catastrophically because the in-shader Q4 sg_matrix kernels
+    // (conv1x1_gemm_32x16_wquant_sg / 16x32_wquant_sg / 32x64_wquant_split_k_sg)
+    // do NOT use tensor API — they're pure SIMD-matrix. For pp512-scale
+    // workloads on M5 the tensor API path is still faster, just not as fast
+    // as llama.cpp's Metal kernels.
+    //
+    // The real gap vs llama.cpp is inside conv1x1_gemm_32x64_split_k_sg's
+    // tensor API path — reproducing llama.cpp's efficiency requires kernel-
+    // level changes (better matmul2d tiling, weight prefetching, etc.), not
+    // dispatcher-level rerouting.
+    //
+    if (backend->isSupportTensorApi() && area > 1 && (mDequantBits == 4 || mDequantBits == 8)) {
+        // On tensor-API devices (M5+) always force outer-dequant + tensor API.
+        dequantInShader = false;
+    }
+    // On non-tensor-API devices (M4 and below), choose in-shader vs outer-dequant
+    // based on weight size AND prompt length. In-shader dequant re-unpacks the Q4
+    // weights once per M-tile (unpack count ~ area/32), so it only wins for large
+    // weights at short area; outer-dequant pays a fixed double-pass instead.
+    // M4 calibration (EXP11, Qwen3-4B): pp256 in-shader +1.2%, pp512 parity,
+    // pp768 outdeq +2.4%, pp2048 outdeq +5.3%; Qwen3.5-2B pp2048 outdeq +3.0%.
+    // ⚠️ M3 has a regression precedent with this heuristic — re-validate there
+    // before relying on the 512 boundary outside M4.
+    // Env MNN_METAL_PREFILL_INSHADER_DEQUANT=1 forces on, =0 forces off.
+    if (!backend->isSupportTensorApi() && rt->supportSimdGroupMatrix() && area > 1 &&
+        (mDequantBits == 4 || mDequantBits == 8)) {
+        const int kForceInShader = MetalEnv::get().prefillInshaderDequant;
+        if (kForceInShader == 1) {
+            dequantInShader = true;
+        } else if (kForceInShader == -1) {
+            dequantInShader = false;
+        } else if ((size_t)ic * oc > 4 * 1024 * 1024 && area < 512) {
+            dequantInShader = true;
+        }
+    }
     mPreDequantWeight = false;
+    mUseFusedDecode = false;
 
 #ifdef MNN_LOW_MEMORY
     if (mDequantScaleBias.get() && dequantInShader) {
@@ -221,10 +459,15 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), kernel_name.c_str(), option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 4), piece, 1), MTLSizeMake(32, 1, 1));
                 } else if(mDequantBits != 2 && mDequantBits != 3 && oc > 16384 && oc_4 % 2 == 0) {
                     // g16 path not extended for W_QUANT_2/3, fall back to g8.
+                    // Baseline g16 = 2 simdgroups per TG, threadgroup size 64,
+                    // each TG covers 16 OC (2 SG x 8 OC/SG).
+                    // Variants explored and retired (see skills/metal-optimize):
+                    // 4SG (halved grid) — e2e neutral with 7x worse stddev on M5;
+                    // G16_OC4 (4 oc_4 rows/SG) — kernel -4.8% on M5 but e2e neutral.
                     auto keys = baseKeys;
                     keys.emplace_back("conv1x1_gemv_g16_wquant_sg");
                     auto pipeline = rt->findPipeline(keys);
@@ -232,8 +475,35 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), "conv1x1_gemv_g16_wquant_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
-                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 16), area, 1), MTLSizeMake(64, 1, 1));
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 16), area, 1),
+                                              MTLSizeMake(64, 1, 1));
+                } else if(mDequantBits != 2 && mDequantBits != 3 && area == 1) {
+                    // GEMV inner reduction lane partitioning:
+                    //   middle_step = min(32, max(block/4, 1)) — M4 Pro tuning.
+                    //
+                    // Tried on M5 (env MNN_METAL_GEMV_WIDE_MIDDLE=1 -> shader
+                    // uses min(32, block) instead): consistent regression across
+                    // 3 runs on Qwen3-0.6B tg128 (229.3 -> 224.0, -2.3%).
+                    // See skills/metal-optimize/SKILL.md "GEMV lane partition"
+                    // note for the analysis. `WIDE_MIDDLE` shader branch is
+                    // kept in-place as an A/B knob; enabling it in dispatcher
+                    // was reverted. Default policy holds on both M4 Pro and M5.
+                    auto keys = baseKeys;
+                    keys.emplace_back("conv1x1_gemv_g4m1_2sg_wquant_sg");
+                    auto pipeline = rt->findPipeline(keys);
+                    if (nil == pipeline) {
+                        pipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), "conv1x1_gemv_g4m1_2sg_wquant_sg", option);
+                        rt->insertPipeline(keys, pipeline);
+                    }
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
+                    // 2 simdgroups per threadgroup, each handles 4 OC independently
+                    mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 8), 1, 1), MTLSizeMake(64, 1, 1));
+                    mIs2sgDecode = true;
+                    // Register this Conv1x1 for Gate/Up fusion lookup
+                    backend->registerConv1x1ForOutput(output, this);
+                    // Register by input tensor for LN fusion consumer lookup
+                    backend->registerConv1x1ForQKV(input, this, output, oc);
                 } else {
                     auto keys = baseKeys;
                     keys.emplace_back("conv1x1_gemv_g8_wquant_sg");
@@ -242,7 +512,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), "conv1x1_gemv_g8_wquant_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
 //                    MNN_PRINT("g8  ic: %d oc: %d\n", input->channel(), oc);
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 8), area, 1), MTLSizeMake(128, 1, 1));
                 }
@@ -263,7 +533,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgmWqStr.c_str(), "conv1x1_gemm_8x16_wquant_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 8), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
                 } else if(area >= 128 && oc >= 512 && area * oc > 512 * 2048 && smem_size >= 8192) {
                     auto keys = baseKeys;
@@ -273,7 +543,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgmWqStr.c_str(), "conv1x1_gemm_32x64_wquant_split_k_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 32), UP_DIV(oc, 64), 1), MTLSizeMake(128, 1, 1));
 
                 } else if(area >= 32 && area * oc > 128 * 2048) {
@@ -284,7 +554,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgmWqStr.c_str(), "conv1x1_gemm_32x16_wquant_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 32), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
                 } else if(oc > 512 && area * oc > 128 * 2048) {
                     auto keys = baseKeys;
@@ -294,7 +564,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgmWqStr.c_str(), "conv1x1_gemm_16x32_wquant_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 16), UP_DIV(oc, 32), 1), MTLSizeMake(32, 1, 1));
                 } else if(area < 16) {
                     // TODO: define useMatrix more accurate
@@ -310,7 +580,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                             pipeline = backend->makeComputePipelineWithSourceOption(sgmWqStr.c_str(), kernel_name.c_str(), option);
                             rt->insertPipeline(keys, pipeline);
                         }
-                        mPipeline = pipeline;
+                        mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                         mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 8), UP_DIV(oc, oc_block), 1), MTLSizeMake(32, 1, 1));
                     } else {
                         std::string sgrWqStr = basicShaderPrefix + sgrWqShader;
@@ -323,7 +593,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                             pipeline = backend->makeComputePipelineWithSourceOption(sgrWqStr.c_str(), kernel_name.c_str(), option);
                             rt->insertPipeline(keys, pipeline);
                         }
-                        mPipeline = pipeline;
+                        mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                         mThreads = std::make_pair(MTLSizeMake(UP_DIV(oc, 4), 1, 1), MTLSizeMake(32, 1, 1));
                     }
                 } else {
@@ -334,7 +604,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                         pipeline = backend->makeComputePipelineWithSourceOption(sgmWqStr.c_str(), "conv1x1_gemm_16x16_wquant_sg", option);
                         rt->insertPipeline(keys, pipeline);
                     }
-                    mPipeline = pipeline;
+                    mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
 //                                    MNN_PRINT("gemm M: %d N: %d\n", area, oc);
                     mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 16), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
                 }
@@ -370,11 +640,12 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
         MetalRuntime *rt = (MetalRuntime *)backend->runtime();
         auto ret = [context getGridAndThreadgroup:mPipeline gid:MTLSizeMake(gid_x, gid_y, gid_z) loop:10 buffer:arr runtime:rt shaderName:name offsets:buffer_offset  queue:backend->queue()];
         mThreads = std::make_pair(std::get<0>(ret), std::get<1>(ret));
+        CONV1X1_SET_TAG(name);
         return NO_ERROR;
     }
 #endif
 
-    std::string sgmWfpShader = gConv1x1WfpSgMatrix;
+    std::string sgmWfpShader = std::string(gConv1x1WfpSgMatrix) + gConv1x1WfpSgMatrixM64;
     std::string sgrWfpShader = gConv1x1WfpSgReduce;
 
     // Dequant using single shader
@@ -407,25 +678,68 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
             }
             option.preprocessorMacros = dic;
 
-            int bytes = backend->useFp16InsteadFp32() ? 2 : 4;
-            // accquire space
-            mTempWeight.reset(Tensor::createDevice<uint8_t>(std::vector<int>{ROUND_UP(oc, 4) * ROUND_UP(ic, 32) * bytes}));
-            backend->onAcquireBuffer(mTempWeight.get(), Backend::DYNAMIC);
-            backend->onReleaseBuffer(mTempWeight.get(), Backend::DYNAMIC);
+            // Fused Q4/Q8 GEMM: the fused kernel unpacks quantized weights
+            // in-kernel, skipping both the dequant pre-pass dispatch and the
+            // mTempWeight allocation.
+            // Enabled when proven correct and profitable: Q4/Q8, tensor-API
+            // capable device, area >= 64 (prefill; below that the outer-dequant
+            // path isn't taken anyway — in-shader dequant kernels handle decode).
+            // MNN_METAL_DISABLE_FUSED_Q4_GEMM=1 is the A/B baseline and
+            // emergency rollback switch (see skills/metal-optimize/env-registry.md).
+            const bool fusedQ4 = !MetalEnv::get().fusedQ4GemmDisabled &&
+                                 (mDequantBits == 4 || mDequantBits == 8) &&
+                                 backend->isSupportTensorApi() && area >= 64;
 
-            auto pipeline = rt->findPipeline(keys);
-            if (nil == pipeline) {
-                pipeline = backend->makeComputePipelineWithSourceOption(sgmWfpStr.c_str(), "conv1x1_w_dequant", option);
-                rt->insertPipeline(keys, pipeline);
+            // M_TILE=64 variant (requires tensor API — implicitly M5+).
+            // Measured on M5, Qwen3-4B, Metal fp16, 4 threads, 3-rep A/B:
+            //   pp512  M32 851 t/s  -> M64 901 t/s  (+5.9%)
+            //   pp2048 M32 715 t/s  -> M64 764 t/s  (+6.8%)
+            mFusedQ4M64 = fusedQ4 && mDequantBits == 4 && area >= 128;
+
+            mFusedQ4 = fusedQ4;
+
+            if (!fusedQ4) {
+                int bytes = backend->useFp16InsteadFp32() ? 2 : 4;
+                mTempWeight.reset(Tensor::createDevice<uint8_t>(std::vector<int>{ROUND_UP(oc, 4) * ROUND_UP(ic, 32) * bytes}));
+                backend->onAcquireBuffer(mTempWeight.get(), Backend::DYNAMIC);
+                backend->onReleaseBuffer(mTempWeight.get(), Backend::DYNAMIC);
+
+                auto pipeline = rt->findPipeline(keys);
+                if (nil == pipeline) {
+                    pipeline = backend->makeComputePipelineWithSourceOption(sgmWfpStr.c_str(), "conv1x1_w_dequant", option);
+                    rt->insertPipeline(keys, pipeline);
+                }
+                mDequantPipeline = pipeline;
+
+                mDequantThreads = [context computeBestGroupAndLocal:pipeline threads:MTLSizeMake(UP_DIV(oc, 1),  UP_DIV(ic, 16), 1)];
+            } else {
+                mDequantPipeline = nil;
+                mTempWeight.reset();
             }
-            mDequantPipeline = pipeline;
-
-            mDequantThreads = [context computeBestGroupAndLocal:pipeline threads:MTLSizeMake(UP_DIV(oc, 1),  UP_DIV(ic, 16), 1)];
         }
 
         {
             auto keys = baseKeys;
-            keys.emplace_back("conv1x1_gemm_32x64_split_k_sg");
+            const char* gemmKernelName = "conv1x1_gemm_32x64_split_k_sg";
+            bool sgMatrixM64 = false;
+            if (mFusedQ4) {
+                if (mFusedQ4M64) {
+                    gemmKernelName = "conv1x1_fused_q4_gemm_stage_m64";
+                    keys.emplace_back("conv1x1_fused_q4_gemm_stage_m64");
+                } else {
+                    gemmKernelName = "conv1x1_fused_q4_gemm_stage";
+                    keys.emplace_back("conv1x1_fused_q4_gemm_stage");
+                }
+            } else if (!backend->isSupportTensorApi() && MetalEnv::get().gemmM64SgMatrix && area >= 128) {
+                // Experimental sg_matrix M=64 tile (MNN_METAL_GEMM_M64=1):
+                // halves grid.x / weight DRAM traffic; fp16 weights from the
+                // outer-dequant pre-pass, same bindings as the 32x64 kernel.
+                gemmKernelName = "conv1x1_gemm_64x64_split_k_sg";
+                keys.emplace_back("conv1x1_gemm_64x64_split_k_sg");
+                sgMatrixM64 = true;
+            } else {
+                keys.emplace_back("conv1x1_gemm_32x64_split_k_sg");
+            }
 
             NSMutableDictionary *dic = [baseDic mutableCopy];
             if (ic_4 % 8 != 0) {
@@ -435,20 +749,36 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
             if(backend->isSupportTensorApi() == true) {
                 [dic setValue:@"1" forKey:@"USE_METAL_TENSOR_OPS"];
                 keys.emplace_back("USE_METAL_TENSOR_OPS");
-                if(ic > oc && ic > 2048 && (ic / blockSize) % 64 == 0) {
+                if(ic > oc && ic > 2048 && (ic / blockSize) % 64 == 0 && !mFusedQ4) {
+                    // LOOP_K64 branch only exists for conv1x1_gemm_32x64_split_k_sg.
+                    // Fused-stage kernel is always K=32 tile.
                     [dic setValue:@"1" forKey:@"LOOP_K64"];
                     keys.emplace_back("LOOP_K64");
+                }
+            }
+            // Fused-stage kernel is compiled with W_QUANT_4 or W_QUANT_8
+            // (kernel body is guarded by `#if defined(W_QUANT_4) || defined(W_QUANT_8)`).
+            // Q8 branch (Step B.7a): reads char4 int8 weights from buffer(3),
+            // applies scale/bias directly (no -8 offset like Q4's unsigned nibble).
+            if (mFusedQ4) {
+                if (mDequantBits == 4) {
+                    [dic setValue:@"1" forKey:@"W_QUANT_4"];
+                    keys.emplace_back("W_QUANT_4");
+                } else {
+                    [dic setValue:@"1" forKey:@"W_QUANT_8"];
+                    keys.emplace_back("W_QUANT_8");
                 }
             }
             option.preprocessorMacros = dic;
 
             auto pipeline = rt->findPipeline(keys);
             if (nil == pipeline) {
-                pipeline = backend->makeComputePipelineWithSourceOption(sgmWfpStr.c_str(), "conv1x1_gemm_32x64_split_k_sg", option);
+                pipeline = backend->makeComputePipelineWithSourceOption(sgmWfpStr.c_str(), gemmKernelName, option);
                 rt->insertPipeline(keys, pipeline);
             }
-            mPipeline = pipeline;
-            mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 32), UP_DIV(oc, 64), 1), MTLSizeMake(128, 1, 1));
+            mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
+            const int mTile = (mFusedQ4M64 || sgMatrixM64) ? 64 : 32;
+            mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, mTile), UP_DIV(oc, 64), 1), MTLSizeMake(128, 1, 1));
             //printf("out dequant MNK: %d %d %d %d\n", area, oc, ic, blockSize);
         }
 
@@ -472,7 +802,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                     pipeline = backend->makeComputePipelineWithSourceOption(sgmWfpStr.c_str(), "conv1x1_gemm_32x16_sg", option);
                     rt->insertPipeline(keys, pipeline);
                 }
-                mPipeline = pipeline;
+                mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                 mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 32), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
             } else {
                 auto keys = baseKeys;
@@ -482,7 +812,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                     pipeline = backend->makeComputePipelineWithSourceOption(sgmWfpStr.c_str(), "conv1x1_gemm_16x16_sg", option);
                     rt->insertPipeline(keys, pipeline);
                 }
-                mPipeline = pipeline;
+                mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
                 mThreads = std::make_pair(MTLSizeMake(UP_DIV(area, 16), UP_DIV(oc, 16), 1), MTLSizeMake(32, 1, 1));
             }
             return NO_ERROR;
@@ -502,7 +832,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
                 pipeline = backend->makeComputePipelineWithSourceOption(sgrWfpStr.c_str(), "conv1x1_z4_sg", option);
                 rt->insertPipeline(keys, pipeline);
             }
-            mPipeline = pipeline;
+            mPipeline = pipeline; CONV1X1_SET_TAG(keys.back());
             mThreads = std::make_pair(MTLSizeMake(ow * oh, oc_4, ob), MTLSizeMake(32, 1, 1));
             return NO_ERROR;
         }
@@ -527,6 +857,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
             MetalRuntime *rt = (MetalRuntime *)backend->runtime();
             auto ret = [context getGridAndThreadgroup:mPipeline gid:MTLSizeMake(gid_x, gid_y, gid_z) loop:10 buffer:arr runtime:rt shaderName:name offsets: buffer_offset queue:backend->queue()];
             mThreads = std::make_pair(std::get<0>(ret), std::get<1>(ret));
+            CONV1X1_SET_TAG(name);
         } else {
             NSUInteger gid_x = UP_DIV(ow * oh, 4);
             NSUInteger gid_y = oc_4;
@@ -544,6 +875,7 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
             MetalRuntime *rt = (MetalRuntime *)backend->runtime();
             auto ret = [context getGridAndThreadgroup:mPipeline gid:MTLSizeMake(gid_x, gid_y, gid_z) loop:10 buffer:arr runtime:rt shaderName:name offsets: buffer_offset queue:backend->queue()];
             mThreads = std::make_pair(std::get<0>(ret), std::get<1>(ret));
+            CONV1X1_SET_TAG(name);
             //printf("conv1x1_z4, %d %d %d %d\n", ow, oh, oc_4, ic_4);
         }
     } else {
@@ -582,35 +914,158 @@ ErrorCode MetalConvolution1x1::onResize(const std::vector<Tensor *> &inputs, con
         }
         //printf("conv1x1 idx:%d, min_cost:%d\n", (int)min_cost.second, (int)min_cost.first);
         mPipeline = [context pipelineWithName:shaderName[min_cost.second] fp16:backend->useFp16InsteadFp32()];
+        CONV1X1_SET_TAG(std::string([shaderName[min_cost.second] UTF8String]));
     }
 
     return NO_ERROR;
 }
 
 void MetalConvolution1x1::onEncode(const std::vector<Tensor *> &inputs, const std::vector<Tensor *> &outputs, id<MTLComputeCommandEncoder> encoder) {
+    // Gate/Up follower: the leader already dispatched this projection
+    if (mIsGateUpFollower) {
+#if MNN_METAL_OP_PROFILE
+        static_cast<MetalBackend *>(backend())->profileDropCurrentSample();
+#endif
+        return;
+    }
+#if MNN_METAL_OP_PROFILE
+    // Report kernel-variant tag so the profile output can distinguish shader paths
+    // (e.g. Convolution/gemm_32x64_split_k_sg vs Convolution/gemv_g4m1_2sg_wquant_sg).
+    {
+        std::string subtag = mProfileTag;
+        if (mIsGateUpLeader) {
+            subtag = "gate_up_fused_" + subtag;
+        } else if (mPreDequantWeight) {
+            subtag = "outdeq+" + subtag;
+        }
+        static_cast<MetalBackend *>(backend())->setProfileSubtag(subtag);
+    }
+#endif
+
     auto input = inputs[0];
     auto output = outputs[0];
-    if(mPreDequantWeight) {
-        // pre dequant weight pipeline
+
+    // Gate/Up leader: dispatch fused kernel covering both gate and up projections
+    if (mIsGateUpLeader && mGateUpPeer && nil != (mHasLNFusion ? mLNFusedPipeline : mGateUpFusedPipeline) && mGateUpPeerOutput) {
+        [encoder setComputePipelineState:(mHasLNFusion ? mLNFusedPipeline : mGateUpFusedPipeline)];
+        // buffer(0): input (shared by gate and up) — with LN fusion, use hidden input
         {
+            auto inTensor = mHasLNFusion ? mLNHiddenInput : input;
+            [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)inTensor->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(inTensor)->offset atIndex:0];
+        }
+        // buffer(1): gate output (this)
+        [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)output->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(output)->offset atIndex:1];
+        // buffer(2): gate params (also used by up since dimensions are identical)
+        [encoder setBuffer:mConstBuffer offset:0 atIndex:2];
+        // buffer(3): gate weight
+        MetalBackend::setTensor(mWeight.get(), encoder, 3);
+        // buffer(4): gate bias
+        MetalBackend::setTensor(mBias.get(), encoder, 4);
+        // buffer(5): gate dequant scale
+        MetalBackend::setTensor(mDequantScaleBias.get(), encoder, 5);
+        // buffer(6): up output
+        MetalBackend::setTensor(mGateUpPeerOutput, encoder, 6);
+        // buffer(7): up weight
+        MetalBackend::setTensor(mGateUpPeer->getWeight().get(), encoder, 7);
+        // buffer(8): up bias
+        MetalBackend::setTensor(mGateUpPeer->getBias().get(), encoder, 8);
+        // buffer(9): up dequant scale
+        MetalBackend::setTensor(mGateUpPeer->getDequantScale().get(), encoder, 9);
+        // buffer(14): {up_scale_coef} - per-tensor coefficient used by up branch
+        [encoder setBuffer:mGateUpSegBuffer offset:0 atIndex:14];
+        if (mHasLNFusion) {
+            bindLNBuffers(encoder);
+        }
+        [encoder dispatchThreadgroups:mThreads.first threadsPerThreadgroup:mThreads.second];
+        return;
+    }
+
+    // Plain single-conv LN fusion (merged gate/up projection consumers): the
+    // standalone LN_FUSED kernel variant computes RMSNorm in-kernel; no
+    // leader/follower pairing involved.
+    if (mHasLNFusion && !mIsGateUpLeader && nil != mLNFusedPipeline && mLNHiddenInput != nullptr) {
+        [encoder setComputePipelineState:mLNFusedPipeline];
+        [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)mLNHiddenInput->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(mLNHiddenInput)->offset atIndex:0];
+        [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)output->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(output)->offset atIndex:1];
+        [encoder setBuffer:mConstBuffer offset:0 atIndex:2];
+        MetalBackend::setTensor(mWeight.get(), encoder, 3);
+        MetalBackend::setTensor(mBias.get(), encoder, 4);
+        MetalBackend::setTensor(mDequantScaleBias.get(), encoder, 5);
+        bindLNBuffers(encoder);
+        [encoder dispatchThreadgroups:mThreads.first threadsPerThreadgroup:mThreads.second];
+        return;
+    }
+
+    if(mPreDequantWeight) {
+        // Fused path: mDequantPipeline is nil and mTempWeight was never
+        // allocated. Dispatch only the fused GEMM which reads quantized weight
+        // from buffer(3) directly. buffer(6) is bound to mWeight as a harmless
+        // alias — the fused kernel body never reads buffer(6), but
+        // binding *something* keeps the Metal validation layer happy in debug
+        // builds.
+        const bool fused = (mDequantPipeline == nil) && mFusedQ4;
+
+#if MNN_METAL_OP_PROFILE
+        // In profile mode, split the two sub-passes (weight dequant + gemm) into
+        // independent command buffers so each shows up as its own profile row.
+        if (!fused) {
+            static_cast<MetalBackend*>(backend())->setProfileSubtag("outdeq_wdq");
+        }
+#endif
+        // pre dequant weight pipeline (legacy outer-dequant path)
+        if (!fused) {
             [encoder setComputePipelineState:mDequantPipeline];
             MetalBackend::setTensor(mWeight.get(), encoder, 0);
             MetalBackend::setTensor(mTempWeight.get(), encoder, 1);
             [encoder setBuffer:mConstBuffer offset:0 atIndex:2];
             MetalBackend::setTensor(mDequantScaleBias.get(), encoder, 3);
             [encoder dispatchThreadgroups:mDequantThreads.first threadsPerThreadgroup:mDequantThreads.second];
+#if MNN_METAL_OP_PROFILE
+            {
+                auto* mtbn = static_cast<MetalBackend*>(backend());
+                encoder = mtbn->profileNextSubpass(std::string("outdeq_gemm_") + mProfileTag);
+            }
+#endif
         }
+#if MNN_METAL_OP_PROFILE
+        if (fused) {
+            static_cast<MetalBackend*>(backend())->setProfileSubtag(std::string("fused_gemm_") + mProfileTag);
+        }
+#endif
         // convolution pipeline
         {
             [encoder setComputePipelineState:mPipeline];
             [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)input->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(input)->offset atIndex:0];
             [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)output->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(output)->offset atIndex:1];
             [encoder setBuffer:mConstBuffer offset:0 atIndex:2];
-            MetalBackend::setTensor(mTempWeight.get(), encoder, 3);
-            MetalBackend::setTensor(mBias.get(), encoder, 4);
-            MetalBackend::setTensor(mDequantScaleBias.get(), encoder, 5);
+            if (mFusedQ4) {
+                // Fused kernel bindings: buffer(3) = quantized weight,
+                // buffer(4) = bias, buffer(5) = dequantScale, buffer(6) =
+                // placeholder alias of mWeight (never read by the fused
+                // kernel; mTempWeight is not allocated).
+                MetalBackend::setTensor(mWeight.get(), encoder, 3);
+                MetalBackend::setTensor(mBias.get(), encoder, 4);
+                MetalBackend::setTensor(mDequantScaleBias.get(), encoder, 5);
+                MetalBackend::setTensor(mWeight.get(), encoder, 6);
+            } else {
+                // Legacy conv1x1_gemm_32x64_split_k_sg: buffer(3)=fp16 dequanted
+                // weight (mTempWeight), buffer(5)=dequantScale (used for LOOP_K64
+                // W_QUANT_4/8 variants only).
+                MetalBackend::setTensor(mTempWeight.get(), encoder, 3);
+                MetalBackend::setTensor(mBias.get(), encoder, 4);
+                MetalBackend::setTensor(mDequantScaleBias.get(), encoder, 5);
+            }
             [encoder dispatchThreadgroups:mThreads.first threadsPerThreadgroup:mThreads.second];
         }
+    } else if (mUseFusedDecode) {
+        // Fused weight+scale decode path: single buffer contains interleaved scale/bias/weights
+        [encoder setComputePipelineState:mPipeline];
+        [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)input->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(input)->offset atIndex:0];
+        [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)output->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(output)->offset atIndex:1];
+        [encoder setBuffer:mConstBuffer offset:0 atIndex:2];
+        MetalBackend::setTensor(mFusedWeightScale.get(), encoder, 3);
+        MetalBackend::setTensor(mBias.get(), encoder, 4);
+        [encoder dispatchThreadgroups:mThreads.first threadsPerThreadgroup:mThreads.second];
     } else {
         [encoder setComputePipelineState:mPipeline];
         [encoder setBuffer:(id<MTLBuffer>)((MetalRuntimeAllocator::MetalBufferAlloc *)input->deviceId())->getBuffer() offset:TensorUtils::getDescribeOrigin(input)->offset atIndex:0];

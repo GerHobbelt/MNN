@@ -47,6 +47,8 @@ static MNNForwardType backend_type_convert(const std::string& type_str) {
         return MNN_FORWARD_OPENGL;
     if (type_str == "vulkan")
         return MNN_FORWARD_VULKAN;
+    if (type_str == "hexagon")
+        return MNN_FORWARD_HEXAGON;
     if (type_str == "npu")
         return MNN_FORWARD_NN;
     return MNN_FORWARD_AUTO;
@@ -203,6 +205,7 @@ void Llm::initRuntime() {
     if(config.type == 3){
         // opencl need set numThread = 64(buffer mode)
         config.numThread |= 64;
+        config.numThread |= 512;
     }
     if (mConfig->power() == "high") {
         cpuBackendConfig.power = BackendConfig::Power_High;
@@ -293,6 +296,11 @@ bool Llm::load() {
     }
     MNN::Express::ExecutorScope s(mExecutor);
     Timer _t;
+    // Must release old module before runtime, because module's Execution objects
+    // reference Backend owned by RuntimeManager. Releasing runtime first would
+    // destroy the Backend, causing use-after-free when module destructor runs.
+    mModulePool.clear();
+    mModule.reset();
     initRuntime();
     // init module status
     // 1. load vocab
@@ -501,8 +509,15 @@ void Llm::tuning(TuneType type, std::vector<int> candidates) {
 }
 
 void Llm::switchMode(Llm::Stage stage) {
-    // do nothing, only reserve api
-    return;
+    if (mConfig->backend_type() == "opencl") {
+        if (stage == Prefill) {
+            // Disable record queue during prefill
+            mRuntimeManager->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, 0);
+        } else if (stage == Decode) {
+            // Enable record queue during decode for better performance, use max record queue size 512 for decode stage
+            mRuntimeManager->setHint(MNN::Interpreter::OP_ENCODER_NUMBER_FOR_COMMIT, 512);
+        }
+    }
 }
 
 void Llm::setKVCacheInfo(size_t add, size_t remove, int* reserve, int n_reserve) {
@@ -1238,6 +1253,7 @@ Llm::~Llm() {
     }
 #endif
     mGenerateParam.reset();
+    mModulePool.clear();
     mModule.reset();
     mRuntimeManager.reset();
     mProcessorRuntimeManager.reset();
@@ -1501,7 +1517,7 @@ VARP Llm::gen_attention_mask(int seq_len) {
         }
 
         // Mask: lower triangular
-       if (mConfig->backend_type() == "cpu" && mValidBlockSize.empty()) { // Now only cpu supports using lower triangular to opt the attention performance
+       if ((mConfig->backend_type() == "cpu" || mConfig->backend_type() == "hexagon") && mValidBlockSize.empty()) {
            attentionMask = _Input({}, NCHW, halide_type_of<float>());
            auto ptr = attentionMask->writeMap<float>();
            ptr[0] = 0;
