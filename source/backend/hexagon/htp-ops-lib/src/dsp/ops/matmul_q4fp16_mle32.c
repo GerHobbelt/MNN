@@ -3,17 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include "dsp/ops.h"
 
 #include "dsp/dma_utils.h"
 #include "dsp/hmx_mgr.h"
 #include "dsp/hmx_utils.h"
 #include "dsp/hvx_convert.h"
 #include "dsp/hvx_utils.h"
+#include "dsp/ops.h"
 #include "dsp/utils.h"
+#include "dsp/vrmpy_to_hmx.h"
 #include "dsp/vtcm_mgr.h"
 #include "dsp/worker_pool.h"
-
 #include "HAP_farf.h"
 #include "HAP_perf.h"
 
@@ -87,9 +87,8 @@ static inline void store_single_output_tile_mle32(uint8_t* c, __fp16* vtcm_dst, 
   }
 }
 
-static inline void store_output_range_mle32(uint8_t* c, __fp16* vtcm_output, const uint8_t* vtcm_scales,
-                                            const uint8_t* bias, int M, int oy_start,
-                                            int oy_begin, int oy_end) {
+static inline void store_output_range_mle32(uint8_t *c, __fp16 *vtcm_output, const uint8_t *vtcm_scales,
+                                            const uint8_t *bias, int M, int oy_start, int oy_begin, int oy_end) {
   HVX_VectorPred q_low = Q6_Q_vsetq_R(64);
   const int num_loops = M / 2;
   const int has_tail = M & 1;
@@ -99,7 +98,7 @@ static inline void store_output_range_mle32(uint8_t* c, __fp16* vtcm_output, con
       __fp16* vtcm_dst_0 = vtcm_output + (oy - oy_start) * 1024;
       __fp16* vtcm_dst_1 = vtcm_output + (oy + 1 - oy_start) * 1024;
       HVX_Vector vScale_0 = load_q4_output_scale(vtcm_scales, oy_start, oy);
-      HVX_Vector vScale_1 = load_q4_output_scale(vtcm_scales, oy_start, oy + 1);
+      HVX_Vector vScale_1   = load_q4_output_scale(vtcm_scales, oy_start, oy + 1);
       int pack_idx = (oy * 32) / 64;
       uint8_t* dst_ptr = c + (size_t)(pack_idx * M) * 128;
 
@@ -153,7 +152,7 @@ typedef struct {
   uint8_t* c;
   __fp16* vtcm_output;
   const uint8_t* vtcm_scales;
-  const uint8_t* bias;
+  const uint8_t      *bias;
   int M;
   int oy_start;
   int oy_begin;
@@ -164,8 +163,8 @@ typedef struct {
 static void store_output_worker_loop(void* data, int _worker_index) {
   (void)_worker_index;
   store_output_task_state_t* state = (store_output_task_state_t*)data;
-  store_output_range_mle32(state->c, state->vtcm_output, state->vtcm_scales, state->bias,
-                           state->M, state->oy_start, state->oy_begin, state->oy_end);
+  store_output_range_mle32(state->c, state->vtcm_output, state->vtcm_scales, state->bias, state->M, state->oy_start,
+                           state->oy_begin, state->oy_end);
   worker_pool_synctoken_jobdone(state->shared_sync);
 }
 
@@ -175,8 +174,10 @@ typedef struct {
   int count;
   int kp;
   int scale_block_num;
+  int                 scale_asymmetric;
   int q4block_variant;
-  const uint8_t* b_scale;
+  int                 weight_is_vrmpy;
+  const uint8_t      *b_scale;
   const uint8_t* vtcm_weight_int4;
   __fp16* vtcm_weight;
   dma_desc_1d_t* depend;
@@ -201,16 +202,34 @@ static inline void process_q4_weight_chunk(const process_chunk_task_state_t* sta
   __fp16* dst_oy = state->vtcm_weight + state->start_idx * weight_fp16_stride;
 
   if (state->scale_block_num > 1) {
-    const int scale_block_bytes = 128;
+    const int                             scale_block_bytes = state->scale_asymmetric ? 256 : 128;
+    const float                          *vrmpyScales       = (const float *) state->b_scale;
+    // Path A carries its scales in the fp32 vrmpy plane, whose entries widen to 32 scale + 32 qbias
+    // when asymmetric; the non-vrmpy plane keeps qbias 128B after its scale inside a 256B entry.
+    const int                             entry_floats      = VRMPY_SCALE_ENTRY_FLOATS(state->scale_asymmetric);
+    __attribute__((aligned(128))) uint8_t reordered[512];
     for (int local_oy = 0; local_oy < state->count; ++local_oy) {
         const int oy = state->oy_start + state->start_idx + local_oy;
         const uint8_t* src = src_oy;
         __fp16* dst = dst_oy;
         for (int k = 0; k < state->kp; ++k) {
             const int scale_idx = (k * state->scale_block_num) / state->kp;
-            const uint8_t* block_scale_ptr = state->b_scale + ((size_t)oy * state->scale_block_num + scale_idx) * scale_block_bytes;
-            const HVX_Vector vBlockScale = vmemu(block_scale_ptr);
-            const HVX_Vector* src_vec = (const HVX_Vector*)src;
+            const uint8_t *block_scale_ptr =
+              state->b_scale + ((size_t) oy * state->scale_block_num + scale_idx) * scale_block_bytes;
+            const float     *sw_oy       = vrmpyScales + (size_t) oy * state->scale_block_num * entry_floats;
+            const HVX_Vector vBlockScale = state->weight_is_vrmpy ?
+                                             vrmpy_scale_block_dup_hf(sw_oy, scale_idx, entry_floats) :
+                                             vmemu(block_scale_ptr);
+            const HVX_Vector vBlockQBias =
+              !state->scale_asymmetric ? Q6_V_vzero() :
+              state->weight_is_vrmpy   ? vrmpy_qbias_block_dup_hf(sw_oy, scale_idx, entry_floats) :
+                                         vmemu(block_scale_ptr + 128);
+            const uint8_t *weightSrc = src;
+            if (state->weight_is_vrmpy) {
+              vrmpy_tile_to_hmx_int4_512(reordered, src);
+              weightSrc = reordered;
+            }
+            const HVX_Vector *src_vec = (const HVX_Vector *) weightSrc;
             HVX_Vector* dst_vec = (HVX_Vector*)dst;
             HVX_Vector vq0 = src_vec[0];
             HVX_Vector vq1 = src_vec[1];
@@ -244,6 +263,11 @@ static inline void process_q4_weight_chunk(const process_chunk_task_state_t* sta
             dst_vec[13] = Q6_Vhf_vmpy_VhfVhf(Q6_V_hi_W(vp_lo3), vBlockScale);
             dst_vec[14] = Q6_Vhf_vmpy_VhfVhf(Q6_V_lo_W(vp_hi3), vBlockScale);
             dst_vec[15] = Q6_Vhf_vmpy_VhfVhf(Q6_V_hi_W(vp_hi3), vBlockScale);
+            if (state->scale_asymmetric) {
+              for (int i = 0; i < 16; ++i) {
+                dst_vec[i] = Q6_Vhf_equals_Vqf16(Q6_Vqf16_vadd_VhfVhf(dst_vec[i], vBlockQBias));
+              }
+            }
             src += 512;
             dst += 1024;
         }
@@ -364,6 +388,8 @@ typedef struct {
   int            kp_max;
   int            scale_block_num;
   int            q4block_variant;
+  int            scale_asymmetric;
+  int            weight_is_vrmpy;
   int            np_chunk;
   int            mp_chunk;
   int            weight_bytes_per_np;
@@ -389,7 +415,7 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
   int            mp_chunk             = param->mp_chunk;
   int            scale_block_num      = param->scale_block_num;
   int            q4block_variant      = param->q4block_variant;
-  const int      dequant_in_weight    = scale_block_num > 1;
+  const int      dequant_in_weight        = scale_block_num > 1;
   int            np_chunk             = param->np_chunk;
   int            weight_bytes_per_np  = param->weight_bytes_per_np;
   int            weight_int4_bytes_per_np = param->weight_int4_bytes_per_np;
@@ -399,7 +425,7 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
   __fp16        *vtcm_activation      = param->vtcm_activation;
   __fp16        *vtcm_output          = param->vtcm_output;
   __fp16        *vtcm_hmx_scales      = param->vtcm_hmx_scales;
-  uint8_t       *vtcm_scales          = param->vtcm_scales;
+  uint8_t       *vtcm_scales              = param->vtcm_scales;
   (void) mp_chunk;
   (void) weight_bytes_per_np;
   (void) weight_int4_bytes_per_np;
@@ -445,7 +471,8 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
     int chunk_starts[NUM_CHUNKS];
     int current_start = 0;
     int validChunk = 0;
-    for (int i = 0; i < NUM_CHUNKS; ++i) {
+    {
+      for (int i = 0; i < NUM_CHUNKS; ++i) {
         chunk_starts[i] = current_start;
         int end = current_start + chunk_size;
         if (end >= weight_dma_count) {
@@ -457,6 +484,7 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
         if (current_start >= weight_dma_count) {
           break;
         }
+      }
     }
 
     _Alignas(64) dma_desc_1d_t weight_desc[NUM_CHUNKS];
@@ -568,7 +596,9 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
         chunk_states[i].kp = kp;
         chunk_states[i].scale_block_num = scale_block_num;
         chunk_states[i].q4block_variant = q4block_variant;
-        chunk_states[i].b_scale = b_scale;
+        chunk_states[i].scale_asymmetric        = param->scale_asymmetric;
+        chunk_states[i].weight_is_vrmpy         = param->weight_is_vrmpy;
+        chunk_states[i].b_scale                 = b_scale;
         chunk_states[i].vtcm_weight_int4 = vtcm_weight_int4;
         chunk_states[i].vtcm_weight = vtcm_weight;
         chunk_states[i].depend = &weight_desc[i];
@@ -585,7 +615,7 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
     dma_wait_for_idle();
     {
       if (act_treat == 0) {
-        act_treat = 1;
+        act_treat          = 1;
         int act_vecs_per_k = (M + 1) / 2;
         if (act_vecs_per_k > 16) {
           act_vecs_per_k = 16;
@@ -620,7 +650,7 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
           store_states[i].c = c;
           store_states[i].vtcm_output = vtcm_output;
           store_states[i].vtcm_scales = vtcm_scales;
-          store_states[i].bias = bias;
+          store_states[i].bias        = bias;
           store_states[i].M = M;
           store_states[i].oy_start = oy_start;
           store_states[i].oy_begin = oy_start + start_idx;
@@ -632,8 +662,8 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
           store_job.dptr = &store_states[i];
           worker_pool_submit(NULL, store_job);
         } else {
-          store_output_range_mle32(c, vtcm_output, vtcm_scales, bias, M, oy_start,
-                                   oy_start + start_idx, oy_start + start_idx + count);
+          store_output_range_mle32(c, vtcm_output, vtcm_scales, bias, M, oy_start, oy_start + start_idx,
+                                   oy_start + start_idx + count);
         }
       }
       if (async_store) {
@@ -649,27 +679,41 @@ static int hmx_matmulq4fp16_mle32_part(const MatmulParam *param) {
   return 0;
 }
 
-static int hmx_matmulq4fp16_mle32_entry(uint8_t * c, const uint8_t * a, const uint8_t * b, const uint8_t * b_scale,
-                                        const uint8_t * bias, int M, int K, int N, int mp_max, int np_max,
-                                        int kp_max, int scale_block_num, int scale_asymmetric,
-                                        int q4block_variant) {
+static int hmx_matmulq4fp16_mle32_entry(uint8_t *c, const uint8_t *a, const uint8_t *b, const uint8_t *b_scale,
+                                        const uint8_t *bias, int M, int K, int N, int mp_max, int np_max, int kp_max,
+                                        int scale_block_num, int scale_asymmetric, int q4block_variant,
+                                        int weight_is_vrmpy) {
   if (scale_block_num <= 0) scale_block_num = 1;
-  (void)scale_asymmetric;
+  if (kp_max <= 0 || kp_max % scale_block_num != 0) {
+    return AEE_EBADPARM;
+  }
   const int dequant_in_weight = scale_block_num > 1;
+  if (c == NULL || a == NULL || b == NULL || M <= 0 || K <= 0 || N <= 0 || mp_max <= 0 || np_max <= 0) {
+    return AEE_EBADPARM;
+  }
+  // Asymmetric qbias is folded into the dequantized weight, which only happens in the block path.
+  // Channel-wise scales are applied at the HMX output stage instead and have no qbias slot, so the
+  // host rejects that combination; fail loudly rather than silently dropping the offset.
+  if (scale_asymmetric && !dequant_in_weight) {
+    return -4;
+  }
+
   MatmulParam param = {
-    .c = c,
-    .a = a,
-    .b = b,
-    .b_scale = b_scale,
-    .bias = bias,
-    .M = M,
-    .K = K,
-    .N = N,
-    .mp_max = mp_max,
-    .np_max = np_max,
-    .kp_max = kp_max,
-    .scale_block_num = scale_block_num,
-    .q4block_variant = q4block_variant,
+    .c                = c,
+    .a                = a,
+    .b                = b,
+    .b_scale          = b_scale,
+    .bias             = bias,
+    .M                = M,
+    .K                = K,
+    .N                = N,
+    .mp_max           = mp_max,
+    .np_max           = np_max,
+    .kp_max           = kp_max,
+    .scale_block_num  = scale_block_num,
+    .q4block_variant  = q4block_variant,
+    .scale_asymmetric = scale_asymmetric,
+    .weight_is_vrmpy  = weight_is_vrmpy,
   };
 
   param.np_chunk = param.np_max;
@@ -688,7 +732,13 @@ static int hmx_matmulq4fp16_mle32_entry(uint8_t * c, const uint8_t * a, const ui
   param.vtcm_activation = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, param.mp_chunk * param.act_bytes_per_mp);
   param.vtcm_output = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, param.mp_chunk * param.np_chunk * OUTPUT_AREA_SIZE);
   param.vtcm_hmx_scales = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, 256);
-  param.vtcm_scales = (uint8_t *) vtcm_seq_alloc(&vtcm_ptr, param.np_chunk * 64 + 64);
+  param.vtcm_scales          = (uint8_t *) vtcm_seq_alloc(&vtcm_ptr, param.np_chunk * 64 + 64);
+  const uintptr_t vtcm_begin = (uintptr_t) vtcm_manager_get_vtcm_base();
+  const size_t    vtcm_size  = (size_t) vtcm_manager_get_vtcm_size();
+  const uintptr_t vtcm_end   = vtcm_begin + vtcm_size;
+  if (vtcm_begin == 0 || vtcm_end < vtcm_begin || (uintptr_t) vtcm_ptr > vtcm_end) {
+    return AEE_ENOMEMORY;
+  }
   memset(param.vtcm_scales, 0, param.np_chunk * 64 + 64);
   if (dequant_in_weight) {
     init_identity_q4_output_scales(param.vtcm_scales, param.np_chunk);
@@ -697,9 +747,9 @@ static int hmx_matmulq4fp16_mle32_entry(uint8_t * c, const uint8_t * a, const ui
   return hmx_matmulq4fp16_mle32_part(&param);
 }
 
-int hmx_matmulq4fp16_mle32(uint8_t * c, const uint8_t * a, const uint8_t * b, const uint8_t * b_scale, const uint8_t * bias,
+int hmx_matmulq4fp16_mle32(uint8_t *c, const uint8_t *a, const uint8_t *b, const uint8_t *b_scale, const uint8_t *bias,
                            int M, int K, int N, int mp_max, int np_max, int kp_max, int scale_block_num,
-                           int scale_asymmetric) {
-  return hmx_matmulq4fp16_mle32_entry(c, a, b, b_scale, bias, M, K, N, mp_max, np_max, kp_max,
-                                      scale_block_num, scale_asymmetric, 0);
+                           int scale_asymmetric, int weight_is_vrmpy) {
+  return hmx_matmulq4fp16_mle32_entry(c, a, b, b_scale, bias, M, K, N, mp_max, np_max, kp_max, scale_block_num,
+                                      scale_asymmetric, 0, weight_is_vrmpy);
 }

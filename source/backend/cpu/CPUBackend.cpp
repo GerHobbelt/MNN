@@ -51,12 +51,16 @@ ErrorCode CastWrapExecution::onExecute(const std::vector<Tensor*>& inputs, const
     CPUCastCreator::cast(inputs[0], outputs[0], cpuBackend, convertType);
     return NO_ERROR;
 }
-void CPUBackend::computeDivideSizes(int size, int* dst, float avgDiv) const {
-    if (mGroupWithComputeRate.size() <= 1 || (avgDiv > 0 && avgDiv < mComputeI)) {
+void CPUBackend::computeDivideSizes(int size, int* dst, float avgDiv, int threads) const {
+    if (threads <= 0 || threads > mThreadNumber) {
+        threads = mThreadNumber;
+    }
+    // Group rates are defined over the full thread set; a capped caller needs an even split.
+    if (mGroupWithComputeRate.size() <= 1 || (avgDiv > 0 && avgDiv < mComputeI) || threads != mThreadNumber) {
         // Avg divide
-        int length = UP_DIV(size, mThreadNumber);
+        int length = UP_DIV(size, threads);
         int cur = length;
-        for (int i=0; i<mThreadNumber; ++i) {
+        for (int i=0; i<threads; ++i) {
             dst[i] = cur;
             cur = cur + length;
             cur = ALIMIN(cur, size);
@@ -288,16 +292,22 @@ Backend* CPURuntime::onCreate(const BackendConfig* config, Backend* origin) cons
         prefix[4] += mMemory;
         prefix[6] += mPower;
         // prefix += hint().modelUUID + "_";
-        bool autoRemove = true;
-        bool syncValid = false;
-        if (hint().useCachedMmap) {
-            autoRemove = false;
-            std::string fileName = MNNFilePathConcat(hint().weightMemoryPath, prefix + "sync.static");
-            syncValid = MNNFileExist(fileName.c_str());
-            const_cast<RuntimeHint&>(hint()).useCachedMmap += syncValid;
-        }
         if (nullptr == mStaticAllocatorMMap.get()) {
-            // Only support set weightmap dir once
+            // Only support set weightmap dir once. The sync.static marker must
+            // also be evaluated only once, here: later calls would see the
+            // sync file this very run wrote at its first onClearBuffer and
+            // flip useCachedMmap into trust-cache mode mid-run, so executions
+            // created after that (e.g. resize-time re-creations) would skip
+            // weight loading while their STATIC buffers no longer come from
+            // the mmap pool.
+            bool autoRemove = true;
+            bool syncValid = false;
+            if (hint().useCachedMmap) {
+                autoRemove = false;
+                std::string fileName = MNNFilePathConcat(hint().weightMemoryPath, prefix + "sync.static");
+                syncValid = MNNFileExist(fileName.c_str());
+                const_cast<RuntimeHint&>(hint()).useCachedMmap += syncValid;
+            }
             mStaticAllocatorRaw = mStaticAllocator;
             auto mmapMem = BufferAllocator::Allocator::createMmap(hint().weightMemoryPath.c_str(), prefix.c_str(), "static", autoRemove, syncValid);
             size_t mmapSize = static_cast<size_t>(hint().mmapFileSize) * 1024 * 1024;
@@ -518,6 +528,14 @@ CPUBackend::CPUBackend(const CPURuntime* runtime, BackendConfig::PrecisionMode p
 
 CPUBackend::~CPUBackend() {
     // Do nothing
+}
+
+int CPUBackend::computeThreadNumber(int workItems) const {
+    int perfCores = mCoreFunctions->perfCoreNumber;
+    if (workItems > 1 && perfCores > 0 && mThreadNumber > perfCores) {
+        return perfCores;
+    }
+    return mThreadNumber;
 }
 void CPUBackend::_resetDynamicMemory() const {
     mRuntime->pCurrentStatus = mDmaInfo->mDynamicAllocator->apply();
@@ -790,6 +808,13 @@ bool CPUBackend::onClearBuffer() {
         mRuntime->mStaticAllocator->sync();
         mRuntime->mStaticAllocator = mRuntime->mStaticAllocatorRaw;
         mRuntime->mStaticAllocatorRaw = nullptr;
+        // The weight-mmap pool is sealed from here on: STATIC buffers acquired
+        // later come from the raw allocator and are not backed by the cache
+        // files, so executions created later (e.g. resize-time re-creations)
+        // must load their weights instead of trusting the cache.
+        if (mRuntime->hint().useCachedMmap > 1) {
+            const_cast<RuntimeHint&>(mRuntime->hint()).useCachedMmap = 1;
+        }
     }
     mCache->reset();
     mDmaInfo->mCurrentDynamicAllocator->release(true);
