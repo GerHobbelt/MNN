@@ -507,6 +507,10 @@ bool Omni::load() {
     if (mIsEmbedding || isQwen3TTSTalker(mConfig)) {
         initRuntime();
         mTokenizer.reset(Tokenizer::createTokenizer(mConfig->tokenizer_file()));
+        if (mTokenizer == nullptr) {
+            MNN_ERROR("[Error]: Failed to load tokenizer from: %s\n", mConfig->tokenizer_file().c_str());
+            return false;
+        }
         if (mIsEmbedding) {
             mDiskEmbedding.reset(new DiskEmbedding(mConfig));
         }
@@ -1993,6 +1997,13 @@ std::vector<int> Omni::tokenizer_encode(const MultimodalPrompt& multimodal_input
     mVisionNum = 0;
     if (mConfig->has_deepstack() && mExtraArgs.size() == 1) {
         mExtraArgs[0] = Express::_Fill(_var<int>({3, 1, 1}, {3}), _Scalar<float>(0.0));
+    }
+
+    // Text-only requests use the same compression and post-processing as Llm.
+    if (mConfig->token_compress() != 0 && !std::regex_search(prompt, multimode_regex)) {
+        ids = Llm::tokenizer_encode(prompt);
+        addPositionIds(static_cast<int>(ids.size()));
+        return ids;
     }
 
     while (std::regex_search(searchStart, prompt.cend(), match, multimode_regex)) {
