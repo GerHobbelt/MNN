@@ -1,10 +1,14 @@
 import math
 import torch
+try:
+    from transformers.initialization import no_init_weights
+except ImportError:
+    from transformers.modeling_utils import no_init_weights
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
 from .model_mapper import ModelMapper
-from .custom_op import FusedAttention, FusedRoPE, MoE, FusedLinearAttention
+from .custom_op import FusedAttention, FusedRoPE, IndexedLinear, FusedLinearAttention
 
 class Embedding(torch.nn.Module):
     def __init__(self, embed, config):
@@ -389,7 +393,10 @@ class Attention(torch.nn.Module):
             key_states = self.qk_norm(key_states)
 
         if self.export_fused_attn and torch.onnx.is_in_onnx_export():
-            attn_output = self.fused_attn(query_states, key_states, value_states, attention_mask)
+            attention_sink = getattr(self, 'sinks', None)
+            if attention_sink is not None:
+                attention_sink = attention_sink.float()
+            attn_output = self.fused_attn(query_states, key_states, value_states, attention_mask, attention_sink)
             if gate is not None:
                 attn_output = attn_output * torch.sigmoid(gate)
             attn_output = self.o_proj(attn_output)
@@ -950,7 +957,9 @@ def _compute_yarn_parameters(rotary_dim, base_theta, scaling_config, max_positio
     def find_correction_range(low_rot, high_rot, d, b, max_pos):
         low = find_correction_dim(low_rot, d, b, max_pos)
         high = find_correction_dim(high_rot, d, b, max_pos)
-        return max(0, math.floor(low)), min(d - 1, math.ceil(high))
+        if scaling_config.get("truncate", True):
+            low, high = math.floor(low), math.ceil(high)
+        return max(0, low), min(d - 1, high)
 
     def linear_ramp_factor(mn, mx, d):
         if mn == mx:
@@ -1328,6 +1337,84 @@ class Qwen3Expert(torch.nn.Module):
         out = self.down_proj_linear(up * self.act_fn(gate))
         return out
 
+
+class IndexedExperts(torch.nn.Module):
+    """Export an expert FFN with indexed projections and ordinary activations."""
+    def __init__(self, experts, layer_id, weight_ops, fuse_gate_up=True):
+        super().__init__()
+        first = experts[0]
+        self.gpt_oss = isinstance(first, GptOssExpert)
+        self.gate_up = None
+
+        def projection(source, input_mode):
+            linears = [getattr(expert, source) for expert in experts]
+            linear = linears[0]
+            if not all(isinstance(item, torch.nn.Linear) and
+                       item.in_features == linear.in_features and item.out_features == linear.out_features
+                       for item in linears):
+                raise ValueError(f'Inconsistent expert projection {source} in layer {layer_id}')
+            name = f'/layers.{layer_id}/experts/{source}'
+            # Retain the original names and quantization boundaries, including
+            # separate gate/up projections, when creating a weight bank.
+            weight_ops[name] = [(f'/expert/{layer_id}_{i}/{source}', item.cpu())
+                                for i, item in enumerate(linears)]
+            return IndexedLinear(linear.in_features, linear.out_features, input_mode, name)
+
+        if hasattr(first, 'gate_up_proj_linear'):
+            self.gate_up = projection('gate_up_proj_linear', 0)
+            self.down = projection('down_proj_linear', 1)
+        elif hasattr(first, 'gate_proj') and hasattr(first, 'up_proj'):
+            self.gate = projection('gate_proj', 0)
+            self.up = projection('up_proj', 0)
+            self.down = projection('down_proj', 1)
+        elif hasattr(first, 'w1') and hasattr(first, 'w3'):
+            self.gate = projection('w1', 0)
+            self.up = projection('w3', 0)
+            self.down = projection('w2', 1)
+        else:
+            raise ValueError(f'Unsupported expert projections: {type(first).__name__}')
+        if self.gpt_oss:
+            self.alpha, self.limit = first.alpha, first.limit
+        else:
+            self.act_fn = getattr(first, 'act_fn', None) or getattr(first, 'activation_fn', None)
+            if self.act_fn is None:
+                raise ValueError(f'Missing expert activation: {type(first).__name__}')
+        self.fusedActivation = -1
+        if (fuse_gate_up and not self.gpt_oss and
+                (self.act_fn is F.silu or isinstance(self.act_fn, torch.nn.SiLU) or
+                 type(self.act_fn).__name__ == 'SiLUActivation')):
+            self.fusedActivation = IndexedLinear.SILU
+        if self.fusedActivation != -1:
+            projection = self.gate_up if self.gate_up is not None else self.gate
+            projection.fusedActivation = self.fusedActivation
+            if self.gate_up is not None:
+                projection.out_features //= 2
+            else:
+                projection.up_name = self.up.name
+
+    def forward(self, hidden_states, selected_experts):
+        if self.fusedActivation != -1:
+            projection = self.gate_up if self.gate_up is not None else self.gate
+            return self.down(projection(hidden_states, selected_experts), selected_experts)
+        if self.gate_up is not None:
+            gate_up = self.gate_up(hidden_states, selected_experts)
+            if self.gpt_oss:
+                gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+            else:
+                gate, up = gate_up.chunk(2, dim=-1)
+        else:
+            gate = self.gate(hidden_states, selected_experts)
+            up = self.up(hidden_states, selected_experts)
+        if self.gpt_oss:
+            limit_tensor = torch.tensor(self.limit, device=gate.device, dtype=gate.dtype)
+            gate = torch.min(gate, limit_tensor)
+            up = up.clamp(min=-self.limit, max=self.limit)
+            activated = (up + 1) * (gate * torch.sigmoid(gate * self.alpha))
+        else:
+            activated = up * self.act_fn(gate)
+        return self.down(activated, selected_experts)
+
+
 class Mlp(torch.nn.Module):
     def __init__(self, mlp, mapper, layer_id, model_type=None):
         super().__init__()
@@ -1335,10 +1422,9 @@ class Mlp(torch.nn.Module):
         ModelMapper.do_map(self, mlp, mapper['mlp'])
         self.is_moe = hasattr(self, 'experts')
         self.export_moe = False
-        self.custom_moe = MoE(self.num_experts, self.top_k, layer_id)
         if isinstance(self.experts, torch.nn.ModuleList):
             self.moe_type = 'qwen3_moe'
-        else:
+        elif not hasattr(self, 'router'):
             self.moe_type = 'qwen3_5_moe'
             self.norm_topk_prob = True
             # refacte experts to qwen3_experts
@@ -1349,7 +1435,8 @@ class Mlp(torch.nn.Module):
             act_fn = original_experts.act_fn
             new_experts_list = torch.nn.ModuleList()
             for i in range(self.num_experts):
-                expert_mlp = Qwen3Expert(hidden_size, expert_dim, act_fn)
+                with no_init_weights():
+                    expert_mlp = Qwen3Expert(hidden_size, expert_dim, act_fn)
                 expert_mlp.gate_up_proj_linear.weight.data = original_experts.gate_up_proj.data[i]
                 expert_mlp.down_proj_linear.weight.data = original_experts.down_proj.data[i]
                 if model_type == 'mobilemoe':
@@ -1378,7 +1465,8 @@ class Mlp(torch.nn.Module):
             self.gate.bias.data = self.router.bias.data
             # refacte experts to qwen3_experts
             original_experts = self.experts
-            expert_dim = original_experts.expert_dim
+            expert_dim = (getattr(original_experts, 'expert_dim', None) or
+                          original_experts.intermediate_size)
             new_experts_list = torch.nn.ModuleList()
             for i in range(self.num_experts):
                 expert_mlp = GptOssExpert(hidden_dim, expert_dim)
@@ -1431,7 +1519,13 @@ class Mlp(torch.nn.Module):
             routing_weights = routing_weights.to(hidden_states.dtype)
 
         if self.export_moe:
-            expert_output = self.custom_moe(hidden_states, routing_weights, selected_experts)
+            # FakeLinear may restore a leading batch dimension on router logits.
+            # Make the IndexedLinear input contract explicit at this boundary.
+            selected_experts = selected_experts.reshape(-1, self.top_k).to(torch.int32)
+            routing_weights = routing_weights.reshape(-1, self.top_k)
+            expert_output = self.experts(hidden_states, selected_experts)
+            expert_output = (expert_output * routing_weights.unsqueeze(-1)).sum(dim=-2)
+            expert_output = expert_output.reshape(batch_size, sequence_length, hidden_dim)
             if shared_expert_output is not None:
                 expert_output = expert_output + shared_expert_output
             return expert_output
@@ -1540,7 +1634,6 @@ class Decoder(torch.nn.Module):
             self.moe_per_expert_scale = self.router.per_expert_scale.data
             self.moe_num_experts = num_experts
             self.moe_top_k = config.origin_config.text_config.top_k_experts
-            self.custom_moe = MoE(num_experts, self.moe_top_k, layer_id)
             self.export_moe = False
             del self.router
 
@@ -1615,7 +1708,10 @@ class Decoder(torch.nn.Module):
                 routing_weights = (routing_weights * self.moe_per_expert_scale[selected_experts]).to(router_input.dtype)
                 if self.export_moe:
                     expert_input = self.pre_feedforward_layernorm_2(router_input)
-                    expert_output = self.custom_moe(expert_input, routing_weights, selected_experts)
+                    selected_experts = selected_experts.reshape(-1, self.moe_top_k).to(torch.int32)
+                    routing_weights = routing_weights.reshape(-1, self.moe_top_k)
+                    expert_output = self.experts(expert_input, selected_experts)
+                    expert_output = (expert_output * routing_weights.unsqueeze(-1)).sum(dim=-2)
                 else:
                     # Expert computation
                     expert_input = self.pre_feedforward_layernorm_2(router_input)
